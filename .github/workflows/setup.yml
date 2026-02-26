@@ -1,0 +1,51 @@
+name: Auto Setup Capacitor Template
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Initialize Project & Capacitor
+        run: |
+          set -e
+          
+          # 1. Membuat package.json dasar
+          echo '{"name": "apk-builder-template", "version": "1.0.0", "description": "Base template", "dependencies": {}}' > package.json
+          
+          # 2. Install dependensi inti Capacitor
+          npm install @capacitor/cli @capacitor/core @capacitor/android
+          
+          # 3. Inisialisasi Capacitor (membuat capacitor.config.json)
+          npx cap init "AppBuilder" "com.builder.app" --web-dir www
+          
+          # 4. Membuat folder www (Syarat wajib sebelum add android)
+          mkdir -p www
+          echo "<html><body>Ready for Build</body></html>" > www/index.html
+          
+          # 5. Men-generate folder platform Android asli dari Capacitor
+          npx cap add android
+
+      - name: Commit & Push Template to Repository
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          # Menambahkan semua file hasil generate ke Git
+          git add package.json package-lock.json capacitor.config.json www/ android/
+          
+          # Commit dan Push kembali ke repository
+          git commit -m "🚀 Auto-generate Capacitor Android template"
+          git push
