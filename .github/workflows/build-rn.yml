@@ -1,0 +1,147 @@
+name: React Native APK Builder
+
+run-name: Build RN ${{ inputs.appName }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        required: true
+        type: string
+      appName:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      versionCode:
+        required: true
+        type: string
+      versionName:
+        required: true
+        type: string
+      iconUrl:
+        required: true
+        type: string
+      webhookUrl:
+        required: true
+        type: string
+      uploadUrl:
+        required: true
+        type: string
+      logUrl:
+        required: true
+        type: string
+      mode:
+        required: true
+        type: string
+      url:
+        required: false
+        type: string
+      projectZip:
+        required: false
+        type: string
+      buildFormat:
+        required: false
+        type: string
+        default: 'apk'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Initialize Builder
+        run: |
+          echo "BUILD_EXT=$(echo '${{ inputs.buildFormat }}' | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Create Expo Project Base
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Menyiapkan environment React Native...\"}" "${{ inputs.logUrl }}"
+          npx create-expo-app@latest rn-project --template blank
+          cd rn-project
+          
+          cat <<EOF > app.json
+          {
+            "expo": {
+              "name": "${{ inputs.appName }}",
+              "slug": "rn-app",
+              "version": "${{ inputs.versionName }}",
+              "orientation": "portrait",
+              "icon": "./assets/icon.png",
+              "android": {
+                "package": "${{ inputs.packageName }}",
+                "versionCode": ${{ inputs.versionCode }},
+                "adaptiveIcon": {
+                  "foregroundImage": "./assets/icon.png",
+                  "backgroundColor": "#ffffff"
+                }
+              }
+            }
+          }
+          EOF
+          
+          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
+
+      - name: Inject User Source Code
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
+          echo "${{ inputs.projectZip }}" | base64 -d > source.zip
+          unzip -q -o source.zip -d extracted_source/
+          
+          cp -R extracted_source/www/* rn-project/
+          rm -f rn-project/index.html
+
+      - name: Prebuild Native Code
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengompilasi konfigurasi Native...\"}" "${{ inputs.logUrl }}"
+          cd rn-project
+          npx expo prebuild --platform android --clean
+
+      - name: Compile APK/AAB
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle...\"}" "${{ inputs.logUrl }}"
+          cd rn-project/android
+          chmod +x gradlew
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
+              ./gradlew bundleRelease --no-daemon
+          else
+              ./gradlew assembleRelease --no-daemon
+          fi
+
+      - name: Upload Artifact
+        if: success()
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengirim file aplikasi ke server...\"}" "${{ inputs.logUrl }}"
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
+              FILE_PATH="rn-project/android/app/build/outputs/bundle/release/app-release.aab"
+              EXT="aab"
+          else
+              FILE_PATH="rn-project/android/app/build/outputs/apk/release/app-release.apk"
+              EXT="apk"
+          fi
+          curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
+
+      - name: Notify System
+        if: always()
+        run: |
+          STATUS="failed"
+          if [ "${{ job.status }}" == "success" ]; then
+              STATUS="success"
+          fi
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\"}" "${{ inputs.webhookUrl }}"
