@@ -70,9 +70,17 @@ jobs:
           cat <<EOF > rn-project/app.json
           {
             "expo": {
-              "name": "${{ inputs.appName }}", "slug": "rn-app", "version": "${{ inputs.versionName }}", "orientation": "portrait", "icon": "./assets/icon.png",
+              "name": "${{ inputs.appName }}", "slug": "rn-app", "version": "${{ inputs.versionName }}", "orientation": "portrait",
+              "icon": "./assets/icon.png",
               "splash": { "image": "./assets/icon.png", "resizeMode": "contain", "backgroundColor": "#ffffff" },
-              "android": { "package": "$SAFE_PKG", "versionCode": $SAFE_VC, "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#ffffff" } }
+              "android": { 
+                "package": "$SAFE_PKG", 
+                "versionCode": $SAFE_VC, 
+                "adaptiveIcon": { 
+                  "foregroundImage": "./assets/icon.png", 
+                  "backgroundColor": "#ffffff" 
+                } 
+              }
             }
           }
           EOF
@@ -107,13 +115,15 @@ jobs:
 
           cd android
           sed -i 's/def enableSeparateBuildPerCPUArchitecture = false/def enableSeparateBuildPerCPUArchitecture = true/g' app/build.gradle
+          # HANYA BUILD ARM64 (MENGURANGI UKURAN DARI 80MB MENJADI 25MB)
+          echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
 
       - name: Turbo Compile
         run: |
           set -o pipefail
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengeksekusi Gradle Turbo... (Tunggu 2-4 Menit)\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengeksekusi Gradle... (Tunggu Notifikasi saat Selesai)\"}" "${{ inputs.logUrl }}" || true
           cd rn-project/android
           chmod +x gradlew
           
@@ -131,7 +141,7 @@ jobs:
       - name: Upload Artifact
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Enkripsi & Pengiriman File Selesai!\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengirim File ke Server...\"}" "${{ inputs.logUrl }}" || true
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE="rn-project/android/app/build/outputs/bundle/release/app-release.aab"; EXT="aab"
           else
