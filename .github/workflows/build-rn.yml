@@ -123,7 +123,8 @@ jobs:
           
           curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
           
-          cp -R extracted_source/www/* rn-project/
+          # PERBAIKAN DI SINI: Salin semua isi hasil unzip langsung ke rn-project
+          cp -a extracted_source/. rn-project/
           rm -f rn-project/index.html
           
           cd rn-project
