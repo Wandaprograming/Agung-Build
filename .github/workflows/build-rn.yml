@@ -97,10 +97,27 @@ jobs:
 
       - name: Prepare Working Project
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Menyiapkan environment React Native...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Validasi & Menyiapkan environment React Native...\"}" "${{ inputs.logUrl }}"
           
           cp -R base-rn-project rn-project
           
+          # 1. AUTO-SANITASI PACKAGE NAME (Mencegah Error AssertionError dari Expo)
+          SAFE_PKG=$(echo "${{ inputs.packageName }}" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+          SAFE_PKG=$(echo "$SAFE_PKG" | sed 's/[^a-z0-9._]//g')
+          # Jika ada angka tepat setelah titik atau di awal string, tambahkan huruf 'n'
+          SAFE_PKG=$(echo "$SAFE_PKG" | sed -E 's/(^|\.)([0-9])/\1n\2/g')
+          # Hapus keyword Java terlarang
+          SAFE_PKG=${SAFE_PKG//native/ntv}
+          SAFE_PKG=${SAFE_PKG//default/dflt}
+          # Pastikan minimal ada format com.sesuatu
+          if [[ "$SAFE_PKG" != *.* ]]; then SAFE_PKG="com.$SAFE_PKG.app"; fi
+          if [ -z "$SAFE_PKG" ] || [ "$SAFE_PKG" == "com..app" ]; then SAFE_PKG="com.app.studio"; fi
+
+          # 2. AUTO-SANITASI VERSION CODE (Wajib Angka Bulat)
+          SAFE_VC=$(echo "${{ inputs.versionCode }}" | sed 's/[^0-9]//g')
+          if [ -z "$SAFE_VC" ]; then SAFE_VC="1"; fi
+          
+          # 3. GENERATE APP.JSON DENGAN DATA YANG SUDAH VALID
           cat <<EOF > rn-project/app.json
           {
             "expo": {
@@ -110,8 +127,8 @@ jobs:
               "orientation": "portrait",
               "icon": "./assets/icon.png",
               "android": {
-                "package": "${{ inputs.packageName }}",
-                "versionCode": ${{ inputs.versionCode }},
+                "package": "$SAFE_PKG",
+                "versionCode": $SAFE_VC,
                 "adaptiveIcon": {
                   "foregroundImage": "./assets/icon.png",
                   "backgroundColor": "#ffffff"
@@ -123,11 +140,12 @@ jobs:
           
           curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
           
-          # PERBAIKAN DI SINI: Salin semua isi hasil unzip langsung ke rn-project
+          # Salin semua source code user ke project
           cp -a extracted_source/. rn-project/
           rm -f rn-project/index.html
           
           cd rn-project
+          # Install dependencies dengan aman
           npm install --no-audit --no-fund --legacy-peer-deps
 
       - name: Prebuild Native Code
