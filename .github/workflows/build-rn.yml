@@ -41,7 +41,6 @@ jobs:
             ~/.npm
             ~/.gradle/caches
             ~/.gradle/wrapper
-            /usr/local/lib/android/sdk/ndk
             base-rn-project
           key: engine-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
@@ -73,7 +72,18 @@ jobs:
             "expo": {
               "name": "${{ inputs.appName }}", "slug": "rn-app", "version": "${{ inputs.versionName }}", "orientation": "portrait", "icon": "./assets/icon.png",
               "splash": { "image": "./assets/icon.png", "resizeMode": "contain", "backgroundColor": "#09090b" },
-              "android": { "package": "$SAFE_PKG", "versionCode": $SAFE_VC, "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#09090b" } }
+              "android": { "package": "$SAFE_PKG", "versionCode": $SAFE_VC, "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#09090b" } },
+              "plugins": [
+                [
+                  "expo-build-properties",
+                  {
+                    "android": {
+                      "enableProguardInReleaseBuilds": true,
+                      "architectures": ["armeabi-v7a", "arm64-v8a"]
+                    }
+                  }
+                ]
+              ]
             }
           }
           EOF
@@ -83,12 +93,10 @@ jobs:
           cp -a extracted_source/. rn-project/
           
           cd rn-project
-          
+          if ! npm install expo-build-properties --no-audit --no-fund --legacy-peer-deps > /dev/null 2>&1; then true; fi
           if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm.log; then
-              ERR=$(tail -n 25 npm.log | sed 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g')
-              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal:
-          $ERR" '{id: $id, log: $log}' > payload.json
-              curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
+              ERR=$(tail -n 15 npm.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud-engine/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal: $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
               exit 1
           fi
 
@@ -96,26 +104,17 @@ jobs:
         run: |
           set -o pipefail
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengompilasi Bridge Native Android...\"}" "${{ inputs.logUrl }}" || true
-          
           cd rn-project
           if ! npx expo prebuild --platform android --clean 2>&1 | tee prebuild.log; then
-              ERR=$(tail -n 30 prebuild.log | sed 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g')
-              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Prebuild Native Gagal:
-          $ERR" '{id: $id, log: $log}' > payload.json
-              curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
+              ERR=$(tail -n 20 prebuild.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud-engine/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Prebuild Native Gagal: $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
               exit 1
           fi
-
-          cd android
-          sed -i 's/def enableSeparateBuildPerCPUArchitecture = false/def enableSeparateBuildPerCPUArchitecture = true/g' app/build.gradle
-          echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
 
       - name: Turbo Compile
         run: |
           set -o pipefail
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengeksekusi Kompilasi APK/AAB... (Tunggu 2-4 Menit)\"}" "${{ inputs.logUrl }}" || true
-          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengeksekusi Gradle Turbo... (Estimasi 3-5 Menit)\"}" "${{ inputs.logUrl }}" || true
           cd rn-project/android
           chmod +x gradlew
           
@@ -123,28 +122,24 @@ jobs:
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=4"; fi
           
           if ! $CMD 2>&1 | tee gradle.log; then
-              ERR=$(tail -n 40 gradle.log | sed 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g')
+              ERR=$(tail -n 30 gradle.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud-engine/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Gagal:
-          $ERR" '{id: $id, log: $log}' > payload.json
-              curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
+          $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
               exit 1
           fi
 
       - name: Upload Artifact
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Sukses! File siap diunduh.\"}" "${{ inputs.logUrl }}" || true
-          
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Enkripsi & Pengiriman File Selesai!\"}" "${{ inputs.logUrl }}" || true
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE="rn-project/android/app/build/outputs/bundle/release/app-release.aab"; EXT="aab"
           else
-              FILE=$(find rn-project/android/app/build/outputs/apk/release -name "*arm64-v8a-release.apk" | head -n 1)
-              if [ -z "$FILE" ]; then FILE=$(find rn-project/android/app/build/outputs/apk/release -name "*.apk" | head -n 1); fi
-              EXT="apk"
+              FILE="rn-project/android/app/build/outputs/apk/release/app-release.apk"; EXT="apk"
           fi
           curl -s -X PUT --data-binary @"$FILE" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT" || true
 
-      - name: Notify
+      - name: Finalize
         if: always()
         run: |
           STATUS="failed"; if [ "${{ job.status }}" == "success" ]; then STATUS="success"; fi
