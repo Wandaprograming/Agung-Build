@@ -75,7 +75,18 @@ jobs:
           path: ~/.npm
           key: npm-cache-${{ runner.os }}
           restore-keys: |
-            npm-cache-${{ runner.os }}
+            npm-cache-${{ runner.os }}-
+
+      - name: Cache Gradle & Android NDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            /usr/local/lib/android/sdk/ndk
+          key: gradle-ndk-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            gradle-ndk-${{ runner.os }}-
 
       - name: Cache Expo Base Project
         id: cache-expo
@@ -97,27 +108,21 @@ jobs:
 
       - name: Prepare Working Project
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Validasi & Menyiapkan environment React Native...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Validasi & Menyiapkan environment...\"}" "${{ inputs.logUrl }}"
           
           cp -R base-rn-project rn-project
           
-          # 1. AUTO-SANITASI PACKAGE NAME (Mencegah Error AssertionError dari Expo)
           SAFE_PKG=$(echo "${{ inputs.packageName }}" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
           SAFE_PKG=$(echo "$SAFE_PKG" | sed 's/[^a-z0-9._]//g')
-          # Jika ada angka tepat setelah titik atau di awal string, tambahkan huruf 'n'
           SAFE_PKG=$(echo "$SAFE_PKG" | sed -E 's/(^|\.)([0-9])/\1n\2/g')
-          # Hapus keyword Java terlarang
           SAFE_PKG=${SAFE_PKG//native/ntv}
           SAFE_PKG=${SAFE_PKG//default/dflt}
-          # Pastikan minimal ada format com.sesuatu
           if [[ "$SAFE_PKG" != *.* ]]; then SAFE_PKG="com.$SAFE_PKG.app"; fi
           if [ -z "$SAFE_PKG" ] || [ "$SAFE_PKG" == "com..app" ]; then SAFE_PKG="com.app.studio"; fi
 
-          # 2. AUTO-SANITASI VERSION CODE (Wajib Angka Bulat)
           SAFE_VC=$(echo "${{ inputs.versionCode }}" | sed 's/[^0-9]//g')
           if [ -z "$SAFE_VC" ]; then SAFE_VC="1"; fi
           
-          # 3. GENERATE APP.JSON DENGAN DATA YANG SUDAH VALID
           cat <<EOF > rn-project/app.json
           {
             "expo": {
@@ -140,29 +145,50 @@ jobs:
           
           curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
           
-          # Salin semua source code user ke project
-          cp -a extracted_source/. rn-project/
+          rm -f rn-project/App.js
           rm -f rn-project/index.html
+          cp -a extracted_source/. rn-project/
           
           cd rn-project
-          # Install dependencies dengan aman
-          npm install --no-audit --no-fund --legacy-peer-deps
+          
+          # Eksekusi NPM Install dengan penangkap Error (Error Trapper)
+          if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_install.log 2>&1; then
+              ERR=$(tail -n 25 npm_install.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Instalasi Dependensi Gagal:
+          $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+              exit 1
+          fi
 
       - name: Prebuild Native Code
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengompilasi konfigurasi Native Android...\"}" "${{ inputs.logUrl }}"
           cd rn-project
-          npx expo prebuild --platform android --clean
+          
+          # Eksekusi Expo Prebuild dengan penangkap Error
+          if ! npx expo prebuild --platform android --clean > prebuild.log 2>&1; then
+              ERR=$(tail -n 25 prebuild.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Expo Prebuild Gagal:
+          $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+              exit 1
+          fi
 
       - name: Compile APK/AAB
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle (Turbo Mode)...\"}" "${{ inputs.logUrl }}"
           cd rn-project/android
           chmod +x gradlew
+          
+          CMD="./gradlew assembleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2
-          else
-              ./gradlew assembleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2
+              CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2"
+          fi
+          
+          # Eksekusi Gradle dengan penangkap Error (menampilkan 40 baris log terakhir)
+          if ! $CMD > gradle.log 2>&1; then
+              ERR=$(tail -n 40 gradle.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Code Gagal:
+          $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+              exit 1
           fi
 
       - name: Upload Artifact
