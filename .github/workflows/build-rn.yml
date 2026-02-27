@@ -124,6 +124,7 @@ jobs:
           SAFE_VC=$(echo "${{ inputs.versionCode }}" | sed 's/[^0-9]//g')
           if [ -z "$SAFE_VC" ]; then SAFE_VC="1"; fi
           
+          # --- PERBAIKAN: Menambahkan blok "splash" agar AAPT Android tidak error ---
           cat <<EOF > rn-project/app.json
           {
             "expo": {
@@ -132,6 +133,11 @@ jobs:
               "version": "${{ inputs.versionName }}",
               "orientation": "portrait",
               "icon": "./assets/icon.png",
+              "splash": {
+                "image": "./assets/icon.png",
+                "resizeMode": "contain",
+                "backgroundColor": "#ffffff"
+              },
               "android": {
                 "package": "$SAFE_PKG",
                 "versionCode": $SAFE_VC,
@@ -184,7 +190,6 @@ jobs:
               CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2"
           fi
           
-          # Menggunakan tee agar log tetap jalan di layar Terminal Github Actions
           if ! $CMD 2>&1 | tee gradle.log; then
               ERR=$(tail -n 40 gradle.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Code Gagal:
