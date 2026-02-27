@@ -70,13 +70,41 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Create Expo Project Base
+      - name: Cache NPM Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-cache-${{ runner.os }}
+          restore-keys: |
+            npm-cache-${{ runner.os }}
+
+      - name: Cache Expo Base Project
+        id: cache-expo
+        uses: actions/cache@v4
+        with:
+          path: base-rn-project
+          key: expo-base-template-v1
+
+      - name: Create Expo Project Base (If Not Cached)
+        if: steps.cache-expo.outputs.cache-hit != 'true'
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Menyiapkan environment React Native...\"}" "${{ inputs.logUrl }}"
-          npx create-expo-app@latest rn-project --template blank
-          cd rn-project
+          npx create-expo-app@latest base-rn-project --template blank
+
+      - name: Extract User Source Code
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
+          echo "${{ inputs.projectZip }}" | base64 -d > source.zip
+          unzip -q -o source.zip -d extracted_source/
+
+      - name: Prepare Working Project
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Menyiapkan environment React Native dari Cache...\"}" "${{ inputs.logUrl }}"
           
-          cat <<EOF > app.json
+          # Salin template base ke folder kerja agar cache asli tidak kotor
+          cp -R base-rn-project rn-project
+          
+          # Buat app.json config
+          cat <<EOF > rn-project/app.json
           {
             "expo": {
               "name": "${{ inputs.appName }}",
@@ -96,38 +124,37 @@ jobs:
           }
           EOF
           
-          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
-
-      - name: Inject User Source Code
-        run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}"
-          echo "${{ inputs.projectZip }}" | base64 -d > source.zip
-          unzip -q -o source.zip -d extracted_source/
+          curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
           
+          # Timpa dengan source code pengguna
           cp -R extracted_source/www/* rn-project/
           rm -f rn-project/index.html
+          
+          cd rn-project
+          # Install dependensi tambahan dari user (super cepat karena cache ~/.npm)
+          npm install --no-audit --no-fund --legacy-peer-deps
 
       - name: Prebuild Native Code
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengompilasi konfigurasi Native...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengompilasi konfigurasi Native Android...\"}" "${{ inputs.logUrl }}"
           cd rn-project
           npx expo prebuild --platform android --clean
 
       - name: Compile APK/AAB
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle (Turbo Mode)...\"}" "${{ inputs.logUrl }}"
           cd rn-project/android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleRelease --no-daemon
+              ./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2
           else
-              ./gradlew assembleRelease --no-daemon
+              ./gradlew assembleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2
           fi
 
       - name: Upload Artifact
         if: success()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengirim file aplikasi ke server...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengirim file aplikasi ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE_PATH="rn-project/android/app/build/outputs/bundle/release/app-release.aab"
               EXT="aab"
