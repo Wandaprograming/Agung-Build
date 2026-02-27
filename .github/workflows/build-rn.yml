@@ -108,6 +108,7 @@ jobs:
 
       - name: Prepare Working Project
         run: |
+          set -o pipefail
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Validasi & Menyiapkan environment...\"}" "${{ inputs.logUrl }}"
           
           cp -R base-rn-project rn-project
@@ -151,8 +152,7 @@ jobs:
           
           cd rn-project
           
-          # Eksekusi NPM Install dengan penangkap Error (Error Trapper)
-          if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_install.log 2>&1; then
+          if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm_install.log; then
               ERR=$(tail -n 25 npm_install.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Instalasi Dependensi Gagal:
           $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
@@ -161,11 +161,11 @@ jobs:
 
       - name: Prebuild Native Code
         run: |
+          set -o pipefail
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengompilasi konfigurasi Native Android...\"}" "${{ inputs.logUrl }}"
           cd rn-project
           
-          # Eksekusi Expo Prebuild dengan penangkap Error
-          if ! npx expo prebuild --platform android --clean > prebuild.log 2>&1; then
+          if ! npx expo prebuild --platform android --clean 2>&1 | tee prebuild.log; then
               ERR=$(tail -n 25 prebuild.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Expo Prebuild Gagal:
           $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
@@ -174,7 +174,8 @@ jobs:
 
       - name: Compile APK/AAB
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle (Turbo Mode)...\"}" "${{ inputs.logUrl }}"
+          set -o pipefail
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle... (Proses ini wajar memakan waktu 3-8 Menit)\"}" "${{ inputs.logUrl }}"
           cd rn-project/android
           chmod +x gradlew
           
@@ -183,8 +184,8 @@ jobs:
               CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=2"
           fi
           
-          # Eksekusi Gradle dengan penangkap Error (menampilkan 40 baris log terakhir)
-          if ! $CMD > gradle.log 2>&1; then
+          # Menggunakan tee agar log tetap jalan di layar Terminal Github Actions
+          if ! $CMD 2>&1 | tee gradle.log; then
               ERR=$(tail -n 40 gradle.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Code Gagal:
           $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
