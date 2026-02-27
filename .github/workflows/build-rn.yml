@@ -1,4 +1,4 @@
-name: React Native APK Builder
+name: Super RN APK Builder
 
 run-name: Build RN ${{ inputs.appName }}
 
@@ -52,119 +52,106 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
-      - name: Setup Node
+      - name: Initialize Builder
+        run: echo "BUILD_EXT=$(echo '${{ inputs.buildFormat }}' | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+
+      - name: Setup Node & Java
         uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+        with: { node-version: '20' }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'zulu', java-version: '17' }
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - name: Cache NPM
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: npm-cache-${{ runner.os }}
-          restore-keys: |
-            npm-cache-${{ runner.os }}-
-
-      - name: Cache Gradle & NDK
+      - name: Ultimate Caching (NPM, Gradle, NDK)
         uses: actions/cache@v4
         with:
           path: |
+            ~/.npm
             ~/.gradle/caches
             ~/.gradle/wrapper
             /usr/local/lib/android/sdk/ndk
-          key: gradle-ndk-${{ runner.os }}-${{ github.run_id }}
+            base-rn-project
+          key: super-cache-rn-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            gradle-ndk-${{ runner.os }}-
+            super-cache-rn-${{ runner.os }}-
 
-      - name: Cache Expo Template
-        id: cache-expo
-        uses: actions/cache@v4
-        with:
-          path: base-rn-project
-          key: expo-base-template-v2
-
-      - name: Create Expo Project (If Not Cached)
-        if: steps.cache-expo.outputs.cache-hit != 'true'
-        run: npx create-expo-app@latest base-rn-project --template blank
-
-      - name: Extract Code
+      - name: Check Expo Base
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Integrasi Source Code...\"}" "${{ inputs.logUrl }}"
+          if [ ! -d "base-rn-project" ]; then
+            npx create-expo-app@latest base-rn-project --template blank
+          fi
+
+      - name: Extract & Prepare Project
+        run: |
+          set -o pipefail
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Menyiapkan environment & Source Code...\"}" "${{ inputs.logUrl }}"
+          
           echo "${{ inputs.projectZip }}" | base64 -d > source.zip
           unzip -q -o source.zip -d extracted_source/
-
-      - name: Prepare Project
-        run: |
           cp -R base-rn-project rn-project
+          
           SAFE_PKG=$(echo "${{ inputs.packageName }}" | tr '[:upper:]' '[:lower:]' | tr '-' '_' | sed 's/[^a-z0-9._]//g' | sed -E 's/(^|\.)([0-9])/\1n\2/g')
-          SAFE_PKG=${SAFE_PKG//native/ntv}
-          SAFE_PKG=${SAFE_PKG//default/dflt}
+          SAFE_PKG=${SAFE_PKG//native/ntv}; SAFE_PKG=${SAFE_PKG//default/dflt}
           if [[ "$SAFE_PKG" != *.* ]]; then SAFE_PKG="com.$SAFE_PKG.app"; fi
-          SAFE_VC=$(echo "${{ inputs.versionCode }}" | sed 's/[^0-9]//g')
-          if [ -z "$SAFE_VC" ]; then SAFE_VC="1"; fi
+          if [ -z "$SAFE_PKG" ] || [ "$SAFE_PKG" == "com..app" ]; then SAFE_PKG="com.app.studio"; fi
+          SAFE_VC=$(echo "${{ inputs.versionCode }}" | sed 's/[^0-9]//g'); SAFE_VC=${SAFE_VC:-1}
           
           cat <<EOF > rn-project/app.json
           {
             "expo": {
-              "name": "${{ inputs.appName }}",
-              "slug": "rn-app",
-              "version": "${{ inputs.versionName }}",
-              "orientation": "portrait",
-              "icon": "./assets/icon.png",
-              "splash": {
-                "image": "./assets/icon.png",
-                "resizeMode": "contain",
-                "backgroundColor": "#ffffff"
-              },
-              "android": {
-                "package": "$SAFE_PKG",
-                "versionCode": $SAFE_VC,
-                "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#ffffff" }
-              }
+              "name": "${{ inputs.appName }}", "slug": "rn-app", "version": "${{ inputs.versionName }}", "orientation": "portrait", "icon": "./assets/icon.png",
+              "splash": { "image": "./assets/icon.png", "resizeMode": "contain", "backgroundColor": "#0f172a" },
+              "android": { "package": "$SAFE_PKG", "versionCode": $SAFE_VC, "adaptiveIcon": { "foregroundImage": "./assets/icon.png", "backgroundColor": "#0f172a" } }
             }
           }
           EOF
+          
           curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
-          rm -f rn-project/App.js
-          rm -f rn-project/index.html
+          rm -f rn-project/App.js rn-project/index.html
           cp -a extracted_source/. rn-project/
+          
           cd rn-project
-          npm install --no-audit --no-fund --legacy-peer-deps
+          
+          # NPM INSTALL WITH ERROR TRAPPER
+          if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm_log.txt; then
+              ERR=$(tail -n 15 npm_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g' | tr '\n' ' ')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR NPM] $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+              exit 1
+          fi
 
-      - name: Prebuild
-        run: |
-          cd rn-project
-          npx expo prebuild --platform android --clean
-
-      - name: Inject Extreme Optimization
-        run: |
-          cd rn-project/android
-          echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
-          echo "android.enableShrinkResourcesInReleaseBuilds=true" >> gradle.properties
-          echo "reactNativeArchitectures=armeabi-v7a,arm64-v8a" >> gradle.properties
-          echo "org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError" >> gradle.properties
-          echo "org.gradle.parallel=true" >> gradle.properties
-          echo "org.gradle.caching=true" >> gradle.properties
-
-      - name: Compile
+      - name: Expo Prebuild (Native Gen)
         run: |
           set -o pipefail
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle (Turbo Mode)...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Melakukan Prebuild Native (Generate Android)...\"}" "${{ inputs.logUrl }}"
+          cd rn-project
+          
+          if ! npx expo prebuild --platform android --clean 2>&1 | tee prebuild_log.txt; then
+              ERR=$(tail -n 20 prebuild_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g' | tr '\n' ' ')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR PREBUILD] $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+              exit 1
+          fi
+
+      - name: Anti-Bengkak Optimization
+        run: |
+          cd rn-project/android
+          echo "reactNativeArchitectures=armeabi-v7a,arm64-v8a" >> gradle.properties
+          echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
+
+      - name: Compile APK/AAB (Turbo Mode)
+        run: |
+          set -o pipefail
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Memulai kompilasi Gradle... (Estimasi 2-4 Menit)\"}" "${{ inputs.logUrl }}"
           cd rn-project/android
           chmod +x gradlew
-          CMD="./gradlew assembleRelease --no-daemon"
-          if [ "${{ inputs.buildFormat }}" == "aab" ]; then CMD="./gradlew bundleRelease --no-daemon"; fi
-          if ! $CMD 2>&1 | tee gradle.log; then
-              ERR=$(tail -n 40 gradle.log | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
-              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Code Gagal:
+          
+          CMD="./gradlew assembleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=4"
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=4"; fi
+          
+          if ! $CMD 2>&1 | tee gradle_log.txt; then
+              ERR=$(tail -n 30 gradle_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*|/workspace|g')
+              jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR KOMPILASI] Gagal memproses Java/Kotlin:
           $ERR" '{id: $id, log: $log}' | curl -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
               exit 1
           fi
@@ -172,18 +159,16 @@ jobs:
       - name: Upload Artifact
         if: success()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Mengirim file ke server...\"}" "${{ inputs.logUrl }}"
-          FILE_PATH="rn-project/android/app/build/outputs/apk/release/app-release.apk"
-          EXT="apk"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[RN Builder] Sukses! Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              FILE_PATH="rn-project/android/app/build/outputs/bundle/release/app-release.aab"
-              EXT="aab"
+              FILE="rn-project/android/app/build/outputs/bundle/release/app-release.aab"; EXT="aab"
+          else
+              FILE="rn-project/android/app/build/outputs/apk/release/app-release.apk"; EXT="apk"
           fi
-          curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
+          curl -X PUT --data-binary @"$FILE" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
 
-      - name: Notify System
+      - name: Notify Webhook
         if: always()
         run: |
-          STATUS="failed"
-          if [ "${{ job.status }}" == "success" ]; then STATUS="success"; fi
+          STATUS="failed"; if [ "${{ job.status }}" == "success" ]; then STATUS="success"; fi
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"$STATUS\"}" "${{ inputs.webhookUrl }}"
