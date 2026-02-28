@@ -136,7 +136,7 @@ jobs:
               npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
           fi
 
-      - name: Compile App (Release)
+      - name: Compile App
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
@@ -155,7 +155,7 @@ jobs:
       - name: Upload Artifact to Core Server
         if: success()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengirim file Release ke server utama...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE_PATH=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
               EXT="aab"
