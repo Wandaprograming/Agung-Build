@@ -99,6 +99,12 @@ jobs:
           fi
           
           cd rn-project
+          
+          # [ FIX 1 ]: Paksa kunci versi AdMob ke versi stabil (14.2.2) via JQ agar tidak auto-update dan merusak kompilasi
+          if [ -f "package.json" ]; then
+              jq 'if .dependencies["react-native-google-mobile-ads"] then .dependencies["react-native-google-mobile-ads"] = "14.2.2" else . end' package.json > tmp_pkg.json && mv tmp_pkg.json package.json
+          fi
+          
           if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm.log; then
               ERR=$(tail -n 15 npm.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal: $ERR" '{id: $id, log: $log}' > payload.json
@@ -119,6 +125,10 @@ jobs:
           fi
 
           cd android
+          
+          # [ FIX 2 ]: Paksa Android Gradle menggunakan Kotlin 1.9.25 yang tahan banting (Override config bawaan Expo)
+          sed -i -E 's/kotlinVersion = .*/kotlinVersion = "1.9.25"/g' build.gradle
+          
           sed -i 's/def enableSeparateBuildPerCPUArchitecture = false/def enableSeparateBuildPerCPUArchitecture = true/g' app/build.gradle
           echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
