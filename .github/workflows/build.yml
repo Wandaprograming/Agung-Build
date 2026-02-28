@@ -89,6 +89,8 @@ jobs:
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
+          sed -i 's/release {/release {\n            signingConfig signingConfigs.debug/g' android/app/build.gradle
+          
           sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" android/variables.gradle
           sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
           sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = 36/g" android/variables.gradle
@@ -143,7 +145,7 @@ jobs:
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler (Release Build)...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler (Release)...\"}" "${{ inputs.logUrl }}"
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
@@ -155,7 +157,7 @@ jobs:
       - name: Upload Artifact to Core Server
         if: success()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE_PATH=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
               EXT="aab"
