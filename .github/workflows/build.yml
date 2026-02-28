@@ -89,7 +89,9 @@ jobs:
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
-          sed -i 's/release {/release {\n            signingConfig signingConfigs.debug/g' android/app/build.gradle
+          curl -sL "https://raw.githubusercontent.com/expo/expo/main/templates/expo-template-bare-minimum/android/app/debug.keystore" -o android/app/release.keystore
+          sed -i 's/buildTypes {/signingConfigs {\n        release {\n            storeFile file("release.keystore")\n            storePassword "android"\n            keyAlias "androiddebugkey"\n            keyPassword "android"\n        }\n    }\n    buildTypes {/g' android/app/build.gradle
+          sed -i 's/release {/release {\n            signingConfig signingConfigs.release/g' android/app/build.gradle
           
           sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" android/variables.gradle
           sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
