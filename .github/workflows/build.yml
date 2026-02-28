@@ -5,46 +5,21 @@ run-name: Build ${{ inputs.appName }}
 on:
   workflow_dispatch:
     inputs:
-      id:
-        required: true
-        type: string
-      appName:
-        required: true
-        type: string
-      packageName:
-        required: true
-        type: string
-      versionCode:
-        required: true
-        type: string
-      versionName:
-        required: true
-        type: string
-      iconUrl:
-        required: true
-        type: string
-      webhookUrl:
-        required: true
-        type: string
-      uploadUrl:
-        required: true
-        type: string
-      logUrl:
-        required: true
-        type: string
-      mode:
-        required: true
-        type: string
-      url:
-        required: false
-        type: string
-      projectZip:
-        required: false
-        type: string
-      buildFormat:
-        required: false
-        type: string
-        default: 'apk'
+      id: { required: true, type: string }
+      appName: { required: true, type: string }
+      packageName: { required: true, type: string }
+      versionCode: { required: true, type: string }
+      versionName: { required: true, type: string }
+      iconUrl: { required: true, type: string }
+      webhookUrl: { required: true, type: string }
+      uploadUrl: { required: true, type: string }
+      logUrl: { required: true, type: string }
+      mode: { required: true, type: string }
+      url: { required: false, type: string }
+      projectZip: { required: false, type: string }
+      buildFormat: { required: false, type: string, default: 'apk' }
+      minSdk: { required: false, type: string, default: '24' }
+      targetSdk: { required: false, type: string, default: '34' }
 
 permissions:
   contents: write
@@ -92,7 +67,6 @@ jobs:
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
-          # 1. SAPU BERSIH PACKAGE NAME LAMA DI SELURUH FILE PROJECT
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
@@ -106,20 +80,21 @@ jobs:
               fi
           fi
           
-          # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
           sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          
-          # Memaksa AndroidManifest membaca dari referensi string yang baru
           sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
           
-          # 3. KONFIGURASI VERSI
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
-          # 4. UNDUH ICON & SPLASH
+          sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" android/variables.gradle
+          sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
+          sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
+
+          sed -i -E 's/minifyEnabled false/minifyEnabled false\n            signingConfig signingConfigs.debug/g' android/app/build.gradle
+          
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -167,7 +142,6 @@ jobs:
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
-          # Parameter paksaan agar Asset (Icon) benar-benar ter-overwrite
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
@@ -175,9 +149,9 @@ jobs:
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleDebug --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
+              ./gradlew bundleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
           else
-              ./gradlew assembleDebug --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
+              ./gradlew assembleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
           fi
 
       - name: Upload Artifact to Core Server
@@ -185,10 +159,10 @@ jobs:
         run: |
           curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              FILE_PATH="android/app/build/outputs/bundle/debug/app-debug.aab"
+              FILE_PATH=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
               EXT="aab"
           else
-              FILE_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+              FILE_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
               EXT="apk"
           fi
           curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
