@@ -28,8 +28,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Init
-        run: echo "BUILD_EXT=$(echo '${{ inputs.buildFormat }}' | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+      - name: Init & Builder Identity
+        run: |
+          echo "BUILD_EXT=$(echo '${{ inputs.buildFormat }}' | tr '[:lower:]' '[:upper:]')" >> $GITHUB_ENV
+          RAW_NAME="${{ github.event.repository.name }}"
+          FORMATTED_NAME=$(echo "$RAW_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}')
+          echo "BUILDER_NAME=$FORMATTED_NAME" >> $GITHUB_ENV
 
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
@@ -57,7 +61,7 @@ jobs:
       - name: Inject Source & Configure
         run: |
           set -o pipefail
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Menyiapkan Cloud Workspace...\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Cloud Workspace...\"}" "${{ inputs.logUrl }}" || true
           
           echo "${{ inputs.projectZip }}" | base64 -d > source.zip
           unzip -q -o source.zip -d extracted_source/
@@ -110,7 +114,7 @@ jobs:
       - name: Generate Native Bridge
         run: |
           set -o pipefail
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengompilasi Bridge Native Android...\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengompilasi Bridge Native Android...\"}" "${{ inputs.logUrl }}" || true
           cd rn-project
           if ! npx expo prebuild --platform android --clean 2>&1 | tee prebuild.log; then
               ERR=$(tail -n 20 prebuild.log | tr -d '"' | tr -d "'" | tr -d '\\' | tr '\n' ' ' | cut -c 1-400)
@@ -132,7 +136,7 @@ jobs:
       - name: Turbo Compile
         run: |
           set -o pipefail
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengeksekusi Gradle... (Tunggu Notifikasi saat Selesai)\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengeksekusi Gradle... (Tunggu Notifikasi saat Selesai)\"}" "${{ inputs.logUrl }}" || true
           cd rn-project/android
           chmod +x gradlew
           
@@ -149,7 +153,7 @@ jobs:
       - name: Upload Artifact
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengirim File ke Server...\"}" "${{ inputs.logUrl }}" || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengirim File ke Server...\"}" "${{ inputs.logUrl }}" || true
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
               FILE="rn-project/android/app/build/outputs/bundle/release/app-release.aab"; EXT="aab"
           else
