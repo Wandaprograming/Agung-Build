@@ -92,8 +92,6 @@ jobs:
           sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" android/variables.gradle
           sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
           sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
-
-          sed -i -E 's/minifyEnabled false/minifyEnabled false\n            signingConfig signingConfigs.debug/g' android/app/build.gradle
           
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
@@ -138,14 +136,14 @@ jobs:
               npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
           fi
 
-      - name: Compile App
+      - name: Compile App (Release)
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler (Release Build)...\"}" "${{ inputs.logUrl }}"
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
@@ -157,12 +155,12 @@ jobs:
       - name: Upload Artifact to Core Server
         if: success()
         run: |
-          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengenkripsi & Mengirim file ke server utama...\"}" "${{ inputs.logUrl }}"
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengirim file Release ke server utama...\"}" "${{ inputs.logUrl }}"
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              FILE_PATH=$(find app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+              FILE_PATH=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
               EXT="aab"
           else
-              FILE_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+              FILE_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
               EXT="apk"
           fi
           curl -X PUT --data-binary @"$FILE_PATH" "${{ inputs.uploadUrl }}&id=${{ inputs.id }}&ext=$EXT"
