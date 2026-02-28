@@ -91,7 +91,7 @@ jobs:
           
           sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" android/variables.gradle
           sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" android/variables.gradle
-          sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g" android/variables.gradle
+          sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = 36/g" android/variables.gradle
           
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
