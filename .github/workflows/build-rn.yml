@@ -42,7 +42,6 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             base-rn-project
-          # Menaikkan versi key untuk memastikan lingkungan awal yang bersih dari sisa eksperimen sebelumnya
           key: engine-cache-v4-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             engine-cache-v4-${{ runner.os }}-
@@ -71,7 +70,6 @@ jobs:
           rm -f rn-project/App.js rn-project/index.html
           cp -a extracted_source/. rn-project/
           
-          # [ FIX IKON ZOOM ]: Menghapus (del) adaptiveIcon agar Expo menggunakan Standard Icon yang proporsional
           if [ -f "rn-project/app.json" ]; then
             jq --arg pkg "$SAFE_PKG" --arg vc "$SAFE_VC" --arg vn "${{ inputs.versionName }}" --arg name "${{ inputs.appName }}" 'del(.expo.android.adaptiveIcon) | .expo.name = $name | .expo.version = $vn | .expo.android.package = $pkg | .expo.android.versionCode = ($vc|tonumber) | .expo.icon = "./assets/icon.png" | .expo.splash.image = "./assets/icon.png"' rn-project/app.json > tmp.json && mv tmp.json rn-project/app.json
           else
@@ -91,16 +89,19 @@ jobs:
           fi
           
           mkdir -p rn-project/assets
-          curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png
-          if ! file rn-project/assets/icon.png | grep -qE 'image|bitmap'; then
+          curl -sL "${{ inputs.iconUrl }}" -o rn-project/assets/icon.png || true
+          if [ ! -f "rn-project/assets/icon.png" ] || ! file rn-project/assets/icon.png | grep -qE 'image|bitmap'; then
             echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > rn-project/assets/icon.png
           fi
           
           cd rn-project
           
-          # Install dependencies murni 100% dari package.json bawaan user tanpa intervensi hardcode
+          # Wajib di CI/CD: Hapus lockfile agar npm install murni mengikuti package.json
+          rm -f package-lock.json yarn.lock
+          
           if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm.log; then
-              ERR=$(tail -n 15 npm.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
+              # FIX EXIT CODE 6: Membersihkan string dari karakter ilegal yang bisa menghancurkan payload JSON
+              ERR=$(tail -n 15 npm.log | tr -d '"' | tr -d "'" | tr -d '\\' | tr '\n' ' ' | cut -c 1-400)
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal: $ERR" '{id: $id, log: $log}' > payload.json
               curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
               exit 1
@@ -112,14 +113,13 @@ jobs:
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[SYSTEM] Mengompilasi Bridge Native Android...\"}" "${{ inputs.logUrl }}" || true
           cd rn-project
           if ! npx expo prebuild --platform android --clean 2>&1 | tee prebuild.log; then
-              ERR=$(tail -n 20 prebuild.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
+              ERR=$(tail -n 20 prebuild.log | tr -d '"' | tr -d "'" | tr -d '\\' | tr '\n' ' ' | cut -c 1-400)
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Prebuild Native Gagal: $ERR" '{id: $id, log: $log}' > payload.json
               curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
               exit 1
           fi
 
           cd android
-          # Konfigurasi arsitektur murni untuk optimasi dan stabilitas APK/AAB
           sed -i 's/def enableSeparateBuildPerCPUArchitecture = false/def enableSeparateBuildPerCPUArchitecture = true/g' app/build.gradle
           echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
@@ -136,7 +136,7 @@ jobs:
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then CMD="./gradlew bundleRelease --no-daemon --parallel --build-cache --configure-on-demand --max-workers=4"; fi
           
           if ! $CMD 2>&1 | tee gradle.log; then
-              ERR=$(tail -n 30 gradle.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig')
+              ERR=$(tail -n 30 gradle.log | tr -d '"' | tr -d "'" | tr -d '\\' | tr '\n' ' ' | cut -c 1-400)
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Kompilasi Gagal:\n$ERR" '{id: $id, log: $log}' > payload.json
               curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
               exit 1
