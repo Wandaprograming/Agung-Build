@@ -18,6 +18,8 @@ on:
       url: { required: false, type: string }
       projectZip: { required: false, type: string }
       buildFormat: { required: false, type: string, default: 'apk' }
+      minSdk: { required: false, type: string, default: '24' }
+      targetSdk: { required: false, type: string, default: '34' }
 
 permissions: { contents: write }
 
@@ -96,11 +98,9 @@ jobs:
           
           cd rn-project
           
-          # Wajib di CI/CD: Hapus lockfile agar npm install murni mengikuti package.json
           rm -f package-lock.json yarn.lock
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm.log; then
-              # FIX EXIT CODE 6: Membersihkan string dari karakter ilegal yang bisa menghancurkan payload JSON
               ERR=$(tail -n 15 npm.log | tr -d '"' | tr -d "'" | tr -d '\\' | tr '\n' ' ' | cut -c 1-400)
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal: $ERR" '{id: $id, log: $log}' > payload.json
               curl -s -X POST -H "Content-Type: application/json" -d @payload.json "${{ inputs.logUrl }}" || true
@@ -124,6 +124,10 @@ jobs:
           echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m" >> gradle.properties
+          
+          sed -i -E "s/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g" build.gradle || true
+          sed -i -E "s/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g" build.gradle || true
+          sed -i -E "s/compileSdkVersion = [0-9]+/compileSdkVersion = ${{ inputs.targetSdk }}/g" build.gradle || true
 
       - name: Turbo Compile
         run: |
