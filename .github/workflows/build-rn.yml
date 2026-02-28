@@ -42,10 +42,10 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             base-rn-project
-          # Cache dinaikkan ke v3 untuk membunuh sisa error Kotlin di memori GitHub
-          key: engine-cache-v3-${{ runner.os }}-${{ github.run_id }}
+          # Menaikkan versi key untuk memastikan lingkungan awal yang bersih dari sisa eksperimen sebelumnya
+          key: engine-cache-v4-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            engine-cache-v3-${{ runner.os }}-
+            engine-cache-v4-${{ runner.os }}-
 
       - name: Prepare Base Engine
         run: |
@@ -71,8 +71,9 @@ jobs:
           rm -f rn-project/App.js rn-project/index.html
           cp -a extracted_source/. rn-project/
           
+          # [ FIX IKON ZOOM ]: Menghapus (del) adaptiveIcon agar Expo menggunakan Standard Icon yang proporsional
           if [ -f "rn-project/app.json" ]; then
-            jq --arg pkg "$SAFE_PKG" --arg vc "$SAFE_VC" --arg vn "${{ inputs.versionName }}" --arg name "${{ inputs.appName }}" '.expo.name = $name | .expo.version = $vn | .expo.android.package = $pkg | .expo.android.versionCode = ($vc|tonumber) | .expo.icon = "./assets/icon.png" | .expo.splash.image = "./assets/icon.png" | .expo.android.adaptiveIcon.foregroundImage = "./assets/icon.png"' rn-project/app.json > tmp.json && mv tmp.json rn-project/app.json
+            jq --arg pkg "$SAFE_PKG" --arg vc "$SAFE_VC" --arg vn "${{ inputs.versionName }}" --arg name "${{ inputs.appName }}" 'del(.expo.android.adaptiveIcon) | .expo.name = $name | .expo.version = $vn | .expo.android.package = $pkg | .expo.android.versionCode = ($vc|tonumber) | .expo.icon = "./assets/icon.png" | .expo.splash.image = "./assets/icon.png"' rn-project/app.json > tmp.json && mv tmp.json rn-project/app.json
           else
             cat <<EOF > rn-project/app.json
             {
@@ -82,11 +83,7 @@ jobs:
                 "splash": { "image": "./assets/icon.png", "resizeMode": "contain", "backgroundColor": "#ffffff" },
                 "android": { 
                   "package": "$SAFE_PKG", 
-                  "versionCode": $SAFE_VC, 
-                  "adaptiveIcon": { 
-                    "foregroundImage": "./assets/icon.png", 
-                    "backgroundColor": "#ffffff" 
-                  } 
+                  "versionCode": $SAFE_VC
                 }
               }
             }
@@ -101,18 +98,7 @@ jobs:
           
           cd rn-project
           
-          # =========================================================================
-          # [ FIX PERMANEN ]: HANCURKAN CACHE & KUNCI VERSI SECARA MUTLAK
-          # =========================================================================
-          # Hapus lock file bawaan user agar npm tidak menarik versi rusak dari cache
-          rm -rf package-lock.json node_modules
-          
-          # Kunci versi AdMob ke 14.2.2 (Paling stabil untuk SDK Expo 51)
-          if [ -f "package.json" ]; then
-            jq 'if .dependencies["react-native-google-mobile-ads"] then .dependencies["react-native-google-mobile-ads"] = "14.2.2" else . end' package.json > tmp_pkg.json && mv tmp_pkg.json package.json
-          fi
-          # =========================================================================
-          
+          # Install dependencies murni 100% dari package.json bawaan user tanpa intervensi hardcode
           if ! npm install --no-audit --no-fund --legacy-peer-deps 2>&1 | tee npm.log; then
               ERR=$(tail -n 15 npm.log | sed -e 's|/home/runner/work/[^/]*/[^/]*|/cloud/workspace|g' -e 's|github|cloud|ig' -e 's|runner|system|ig' | tr '\n' ' ')
               jq -n --arg id "${{ inputs.id }}" --arg log "[ERROR] Setup Paket Gagal: $ERR" '{id: $id, log: $log}' > payload.json
@@ -133,9 +119,7 @@ jobs:
           fi
 
           cd android
-          # Paksa Kotlin ke 1.9.25 untuk menyelaraskan dengan library AdMob
-          sed -i -E 's/kotlinVersion = .*/kotlinVersion = "1.9.25"/g' build.gradle || true
-          
+          # Konfigurasi arsitektur murni untuk optimasi dan stabilitas APK/AAB
           sed -i 's/def enableSeparateBuildPerCPUArchitecture = false/def enableSeparateBuildPerCPUArchitecture = true/g' app/build.gradle
           echo "reactNativeArchitectures=arm64-v8a" >> gradle.properties
           echo "android.enableProguardInReleaseBuilds=true" >> gradle.properties
