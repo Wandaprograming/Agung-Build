@@ -1,0 +1,95 @@
+name: Build Flutter APK
+on:
+  workflow_dispatch:
+    inputs:
+      id:
+        required: true
+        type: string
+      appName:
+        required: true
+        type: string
+      packageName:
+        required: true
+        type: string
+      versionCode:
+        required: true
+        type: string
+      versionName:
+        required: true
+        type: string
+      projectZip:
+        required: true
+        type: string
+      buildFormat:
+        required: true
+        type: string
+      webhookUrl:
+        required: true
+        type: string
+      uploadUrl:
+        required: true
+        type: string
+      logUrl:
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Start Log
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Memulai Mesin Flutter...\"}" ${{ github.event.inputs.logUrl }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+
+      - name: Extract Project
+        run: |
+          mkdir project
+          echo "${{ github.event.inputs.projectZip }}" | base64 --decode > project/src.zip
+          cd project
+          unzip src.zip
+          rm src.zip
+
+      - name: Send Compile Log
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengkompilasi Flutter Project...\"}" ${{ github.event.inputs.logUrl }}
+
+      - name: Get Dependencies
+        run: |
+          cd project
+          flutter pub get
+
+      - name: Build APK/AAB
+        run: |
+          cd project
+          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+            flutter build appbundle --release --build-name=${{ github.event.inputs.versionName }} --build-number=${{ github.event.inputs.versionCode }}
+          else
+            flutter build apk --release --build-name=${{ github.event.inputs.versionName }} --build-number=${{ github.event.inputs.versionCode }}
+          fi
+
+      - name: Send Upload Log
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengunggah hasil ke VPS...\"}" ${{ github.event.inputs.logUrl }}
+
+      - name: Upload to Server
+        run: |
+          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
+            curl -X POST --data-binary "@project/build/app/outputs/bundle/release/app-release.aab" "${{ github.event.inputs.uploadUrl }}&ext=aab"
+          else
+            curl -X POST --data-binary "@project/build/app/outputs/flutter-apk/app-release.apk" "${{ github.event.inputs.uploadUrl }}&ext=apk"
+          fi
+
+      - name: Webhook Success
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"success\"}" ${{ github.event.inputs.webhookUrl }}
+
+      - name: Webhook Fail
+        if: failure()
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"failed\"}" ${{ github.event.inputs.webhookUrl }}
