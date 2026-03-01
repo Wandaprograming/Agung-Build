@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send Start Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[GITHUB] Memulai Mesin Flutter...\"}" "${{ github.event.inputs.logUrl }}"
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Memulai Mesin Kompilasi Cloud...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -74,7 +74,7 @@ jobs:
           unzip src.zip
           rm src.zip
           flutter create .
-          curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[GITHUB] Menyuntikkan Konfigurasi Native (Icon & Package Name)...\"}" "${{ github.event.inputs.logUrl }}"
+          curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Menyuntikkan Konfigurasi Native (Package Name & Icon)...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Inject App Name & Package Name
         run: |
@@ -97,18 +97,23 @@ jobs:
       - name: Process App Icon
         run: |
           cd project
-          wget -qO icon.png "${{ github.event.inputs.iconUrl }}" || true
-          if [ -f "icon.png" ]; then
-            sudo apt-get install -y imagemagick
-            convert icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-            convert icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-            convert icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-            convert icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-            convert icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          if [ -n "${{ github.event.inputs.iconUrl }}" ] && [ "${{ github.event.inputs.iconUrl }}" != "null" ]; then
+            wget -qO icon.png "${{ github.event.inputs.iconUrl }}" || true
+            if [ -s icon.png ] && file icon.png | grep -qi "image"; then
+              sudo apt-get update && sudo apt-get install -y imagemagick
+              convert icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png || true
+              convert icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png || true
+              convert icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
+              convert icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
+              convert icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+              curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] App Icon berhasil diterapkan.\"}" "${{ github.event.inputs.logUrl }}"
+            else
+              curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Info: URL Icon kosong/invalid. Menggunakan icon bawaan.\"}" "${{ github.event.inputs.logUrl }}"
+            fi
           fi
 
       - name: Send Compile Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[GITHUB] Mengkompilasi Flutter Project...\"}" "${{ github.event.inputs.logUrl }}"
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Mengkompilasi Flutter Project (Ini membutuhkan waktu)...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Get Dependencies
         run: |
@@ -125,7 +130,7 @@ jobs:
           fi
 
       - name: Send Upload Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[GITHUB] Mengunggah hasil ke Server...\"}" "${{ github.event.inputs.logUrl }}"
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Mengunggah hasil ke Storage Server...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Upload to Server
         run: |
