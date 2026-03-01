@@ -17,6 +17,21 @@ on:
       versionName:
         required: true
         type: string
+      minSdk:
+        required: false
+        type: string
+      targetSdk:
+        required: false
+        type: string
+      iconUrl:
+        required: false
+        type: string
+      mode:
+        required: false
+        type: string
+      url:
+        required: false
+        type: string
       projectZip:
         required: true
         type: string
@@ -38,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send Start Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Memulai Mesin Flutter...\"}" ${{ github.event.inputs.logUrl }}
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Memulai Mesin Flutter...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Setup Java
         uses: actions/setup-java@v3
@@ -51,16 +66,50 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Extract Project
+      - name: Extract Project & Init Platform
         run: |
           mkdir project
           echo "${{ github.event.inputs.projectZip }}" | base64 --decode > project/src.zip
           cd project
           unzip src.zip
           rm src.zip
+          flutter create .
+          curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Menyuntikkan Konfigurasi Native (Icon & Package Name)...\"}" "${{ github.event.inputs.logUrl }}"
+
+      - name: Inject App Name & Package Name
+        run: |
+          cd project
+          sed -i "s/android:label=\"[^\"]*\"/android:label=\"${{ github.event.inputs.appName }}\"/g" android/app/src/main/AndroidManifest.xml
+          sed -i "s/namespace = \"[^\"]*\"/namespace = \"${{ github.event.inputs.packageName }}\"/g" android/app/build.gradle
+          sed -i "s/applicationId = \"[^\"]*\"/applicationId = \"${{ github.event.inputs.packageName }}\"/g" android/app/build.gradle
+          sed -i "s/package=\"[^\"]*\"/package=\"${{ github.event.inputs.packageName }}\"/g" android/app/src/main/AndroidManifest.xml
+          sed -i "s/package=\"[^\"]*\"/package=\"${{ github.event.inputs.packageName }}\"/g" android/app/src/debug/AndroidManifest.xml
+          sed -i "s/package=\"[^\"]*\"/package=\"${{ github.event.inputs.packageName }}\"/g" android/app/src/profile/AndroidManifest.xml
+          rm -rf android/app/src/main/kotlin/com/example
+          NEW_PATH=$(echo ${{ github.event.inputs.packageName }} | tr . /)
+          mkdir -p "android/app/src/main/kotlin/$NEW_PATH"
+          cat <<EOF > "android/app/src/main/kotlin/$NEW_PATH/MainActivity.kt"
+          package ${{ github.event.inputs.packageName }}
+          import io.flutter.embedding.android.FlutterActivity
+          class MainActivity: FlutterActivity() {
+          }
+          EOF
+
+      - name: Process App Icon
+        run: |
+          cd project
+          wget -qO icon.png "${{ github.event.inputs.iconUrl }}" || true
+          if [ -f "icon.png" ]; then
+            sudo apt-get install -y imagemagick
+            convert icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+            convert icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+            convert icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            convert icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            convert icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          fi
 
       - name: Send Compile Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengkompilasi Flutter Project...\"}" ${{ github.event.inputs.logUrl }}
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengkompilasi Flutter Project...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Get Dependencies
         run: |
@@ -77,19 +126,20 @@ jobs:
           fi
 
       - name: Send Upload Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengunggah hasil ke VPS...\"}" ${{ github.event.inputs.logUrl }}
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"log\":\"[GITHUB] Mengunggah hasil ke VPS...\"}" "${{ github.event.inputs.logUrl }}"
 
       - name: Upload to Server
         run: |
+          cd project
           if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
-            curl -X POST --data-binary "@project/build/app/outputs/bundle/release/app-release.aab" "${{ github.event.inputs.uploadUrl }}&ext=aab"
+            curl -X POST --data-binary "@build/app/outputs/bundle/release/app-release.aab" "${{ github.event.inputs.uploadUrl }}&ext=aab"
           else
-            curl -X POST --data-binary "@project/build/app/outputs/flutter-apk/app-release.apk" "${{ github.event.inputs.uploadUrl }}&ext=apk"
+            curl -X POST --data-binary "@build/app/outputs/flutter-apk/app-release.apk" "${{ github.event.inputs.uploadUrl }}&ext=apk"
           fi
 
       - name: Webhook Success
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"success\"}" ${{ github.event.inputs.webhookUrl }}
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"success\"}" "${{ github.event.inputs.webhookUrl }}"
 
       - name: Webhook Fail
         if: failure()
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"failed\"}" ${{ github.event.inputs.webhookUrl }}
+        run: curl -X POST -H "Content-Type:application/json" -d "{\"status\":\"failed\"}" "${{ github.event.inputs.webhookUrl }}"
