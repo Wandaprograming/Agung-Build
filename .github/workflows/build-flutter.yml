@@ -1,149 +1,125 @@
-name: Build Flutter APK
+name: Flutter Native Compiler
+run-name: Compile ${{ inputs.appName }}
 on:
   workflow_dispatch:
     inputs:
-      id:
-        required: true
-        type: string
-      appName:
-        required: true
-        type: string
-      packageName:
-        required: true
-        type: string
-      versionCode:
-        required: true
-        type: string
-      versionName:
-        required: true
-        type: string
-      minSdk:
-        required: false
-        type: string
-      targetSdk:
-        required: false
-        type: string
-      iconUrl:
-        required: false
-        type: string
-      mode:
-        required: false
-        type: string
-      url:
-        required: false
-        type: string
-      projectZip:
-        required: true
-        type: string
-      buildFormat:
-        required: true
-        type: string
-      webhookUrl:
-        required: true
-        type: string
-      uploadUrl:
-        required: true
-        type: string
-      logUrl:
-        required: true
-        type: string
-
+      id: { required: true, type: string }
+      appName: { required: true, type: string }
+      packageName: { required: true, type: string }
+      versionCode: { required: true, type: string }
+      versionName: { required: true, type: string }
+      iconUrl: { required: true, type: string }
+      webhookUrl: { required: true, type: string }
+      uploadUrl: { required: true, type: string }
+      logUrl: { required: true, type: string }
+      mode: { required: true, type: string }
+      url: { required: false, type: string }
+      projectZip: { required: false, type: string }
+      buildFormat: { required: false, type: string, default: 'apk' }
+      minSdk: { required: false, type: string, default: '24' }
+      targetSdk: { required: false, type: string, default: '34' }
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - name: Send Start Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Memulai Mesin Kompilasi Cloud...\"}" "${{ github.event.inputs.logUrl }}"
-
-      - name: Setup Java
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@v4
+      
+      - name: Init Engine
+        run: |
+          RAW_NAME="${{ github.event.repository.name }}"
+          PREFIX="[$(echo "$RAW_NAME" | sed 's/-/ /g')]"
+          echo "PREFIX=$PREFIX" >> $GITHUB_ENV
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"$PREFIX Memulai Mesin Kompilasi Cloud...\"}" "${{ inputs.logUrl }}"
+          
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          
+      - uses: actions/setup-java@v3
         with:
           distribution: 'zulu'
           java-version: '17'
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
-      - name: Extract Project & Init Platform
+          
+      - name: Persistent Keystore Setup
         run: |
-          mkdir project
-          echo "${{ github.event.inputs.projectZip }}" | base64 --decode > project/src.zip
-          cd project
-          unzip src.zip
-          rm src.zip
-          flutter create .
-          curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Menyuntikkan Konfigurasi Native (Package Name & Icon)...\"}" "${{ github.event.inputs.logUrl }}"
-
-      - name: Inject App Name & Package Name
-        run: |
-          cd project
-          find android -type f -name "AndroidManifest.xml" -exec sed -i "s/android:label=\"[^\"]*\"/android:label=\"${{ github.event.inputs.appName }}\"/g" {} +
-          find android -type f -name "build.gradle*" -exec sed -i "s/namespace = \"[^\"]*\"/namespace = \"${{ github.event.inputs.packageName }}\"/g" {} +
-          find android -type f -name "build.gradle*" -exec sed -i "s/applicationId = \"[^\"]*\"/applicationId = \"${{ github.event.inputs.packageName }}\"/g" {} +
-          find android -type f -name "AndroidManifest.xml" -exec sed -i "s/package=\"[^\"]*\"/package=\"${{ github.event.inputs.packageName }}\"/g" {} +
-          find android/app/src/main -name "MainActivity.kt" -delete
-          find android/app/src/main -name "MainActivity.java" -delete
-          NEW_PATH=$(echo ${{ github.event.inputs.packageName }} | tr . /)
-          mkdir -p "android/app/src/main/kotlin/$NEW_PATH"
-          cat <<EOF > "android/app/src/main/kotlin/$NEW_PATH/MainActivity.kt"
-          package ${{ github.event.inputs.packageName }}
-          import io.flutter.embedding.android.FlutterActivity
-          class MainActivity: FlutterActivity() {
-          }
-          EOF
-
-      - name: Process App Icon
-        run: |
-          cd project
-          if [ -n "${{ github.event.inputs.iconUrl }}" ] && [ "${{ github.event.inputs.iconUrl }}" != "null" ]; then
-            wget -qO icon.png "${{ github.event.inputs.iconUrl }}" || true
-            if [ -s icon.png ] && file icon.png | grep -qi "image"; then
-              sudo apt-get update && sudo apt-get install -y imagemagick
-              convert icon.png -resize 48x48 android/app/src/main/res/mipmap-mdpi/ic_launcher.png || true
-              convert icon.png -resize 72x72 android/app/src/main/res/mipmap-hdpi/ic_launcher.png || true
-              convert icon.png -resize 96x96 android/app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
-              convert icon.png -resize 144x144 android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
-              convert icon.png -resize 192x192 android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
-              curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] App Icon berhasil diterapkan.\"}" "${{ github.event.inputs.logUrl }}"
-            else
-              curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Info: URL Icon kosong/invalid. Menggunakan icon bawaan.\"}" "${{ github.event.inputs.logUrl }}"
-            fi
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Memverifikasi sertifikat kriptografi...\"}" "${{ inputs.logUrl }}"
+          if [ ! -f "appstudio.keystore" ]; then
+            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026
+            git config user.name "Build Engine"
+            git config user.email "engine@appbuilder.id"
+            git add appstudio.keystore
+            git commit -m "System: Generate Persistent Keystore"
+            git push origin main
           fi
 
-      - name: Send Compile Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Mengkompilasi Flutter Project (Ini membutuhkan waktu)...\"}" "${{ github.event.inputs.logUrl }}"
-
-      - name: Get Dependencies
+      - name: Prepare Workspace
         run: |
-          cd project
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset aplikasi...\"}" "${{ inputs.logUrl }}"
+          echo "${{ inputs.projectZip }}" | base64 -d > project.zip
+          unzip -q project.zip -d app
+          cd app
+          flutter clean
           flutter pub get
 
-      - name: Build APK/AAB
+      - name: Deep Configuration Injection
         run: |
-          cd project
-          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
-            flutter build appbundle --release --build-name=${{ github.event.inputs.versionName }} --build-number=${{ github.event.inputs.versionCode }}
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menginjeksi konfigurasi Native OS...\"}" "${{ inputs.logUrl }}"
+          cd app
+          sudo apt-get install -y imagemagick
+          wget -q -O icon.png "${{ inputs.iconUrl }}" || curl -sL -o icon.png "${{ inputs.iconUrl }}"
+          RES_DIR=$(find . -type d -name "res" | grep "src/main/res" | head -n 1)
+          if [ -n "$RES_DIR" ] && [ -f "icon.png" ]; then
+            for SIZE in 48 72 96 144 192; do
+              DENS=""
+              if [ "$SIZE" == "48" ]; then DENS="mdpi"; fi
+              if [ "$SIZE" == "72" ]; then DENS="hdpi"; fi
+              if [ "$SIZE" == "96" ]; then DENS="xhdpi"; fi
+              if [ "$SIZE" == "144" ]; then DENS="xxhdpi"; fi
+              if [ "$SIZE" == "192" ]; then DENS="xxxhdpi"; fi
+              mkdir -p "$RES_DIR/mipmap-$DENS"
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher.png"
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png"
+            done
+          fi
+          find . -name "AndroidManifest.xml" -exec sed -i 's/android:label="[^"]*"/android:label="'"${{ inputs.appName }}"'"/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/applicationId ".*"/applicationId "'"${{ inputs.packageName }}"'"/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/namespace ".*"/namespace "'"${{ inputs.packageName }}"'"/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/minSdkVersion .*/minSdkVersion ${{ inputs.minSdk }}/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/targetSdkVersion .*/targetSdkVersion ${{ inputs.targetSdk }}/g' {} +
+          find . -name "build.gradle" -exec sed -i 's/compileSdkVersion .*/compileSdkVersion ${{ inputs.targetSdk }}/g' {} +
+
+      - name: Build & Post-Signing
+        run: |
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menjalankan kompilasi Flutter Engine...\"}" "${{ inputs.logUrl }}"
+          cd app
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
+            flutter build appbundle --release --build-name=${{ inputs.versionName }} --build-number=${{ inputs.versionCode }}
           else
-            flutter build apk --release --build-name=${{ github.event.inputs.versionName }} --build-number=${{ github.event.inputs.versionCode }}
+            flutter build apk --release --build-name=${{ inputs.versionName }} --build-number=${{ inputs.versionCode }}
+          fi
+          cd ..
+          curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menerapkan Digital Signature (Production Keystore)...\"}" "${{ inputs.logUrl }}"
+          ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
+          APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
+          if [ "${{ inputs.buildFormat }}" == "aab" ]; then
+            AAB_PATH=$(find app/build -name "*.aab" | head -n 1)
+            jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio
+            curl -X PUT --data-binary @"$AAB_PATH" "${{ inputs.uploadUrl }}&ext=aab"
+          else
+            APK_PATH=$(find app/build -name "*.apk" | grep release | head -n 1)
+            $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk
+            $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk
+            curl -X PUT --data-binary @"aligned.apk" "${{ inputs.uploadUrl }}&ext=apk"
           fi
 
-      - name: Send Upload Log
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"log\":\"[BUILD SERVER] Mengunggah hasil ke Storage Server...\"}" "${{ github.event.inputs.logUrl }}"
-
-      - name: Upload to Server
+      - name: Finalize
+        if: always()
         run: |
-          cd project
-          if [ "${{ github.event.inputs.buildFormat }}" == "aab" ]; then
-            curl -X POST --data-binary "@build/app/outputs/bundle/release/app-release.aab" "${{ github.event.inputs.uploadUrl }}&id=${{ github.event.inputs.id }}&ext=aab"
+          if [ "${{ job.status }}" == "success" ]; then
+            curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"success\"}" "${{ inputs.webhookUrl }}"
           else
-            curl -X POST --data-binary "@build/app/outputs/flutter-apk/app-release.apk" "${{ github.event.inputs.uploadUrl }}&id=${{ github.event.inputs.id }}&ext=apk"
+            curl -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"status\": \"failed\"}" "${{ inputs.webhookUrl }}"
           fi
-
-      - name: Webhook Success
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"status\":\"success\"}" "${{ github.event.inputs.webhookUrl }}"
-
-      - name: Webhook Fail
-        if: failure()
-        run: curl -X POST -H "Content-Type:application/json" -d "{\"id\":\"${{ github.event.inputs.id }}\",\"status\":\"failed\"}" "${{ github.event.inputs.webhookUrl }}"
