@@ -59,33 +59,44 @@ jobs:
 
       - name: Prepare Workspace
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset aplikasi...\"}" "${{ inputs.logUrl }}" > /dev/null
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menyiapkan Workspace & Capacitor Engine...\"}" "${{ inputs.logUrl }}" > /dev/null
           if [ "${{ inputs.mode }}" == "webview" ]; then
-            npm install -g @capacitor/cli @capacitor/core > /dev/null 2>&1
-            npx cap create app "App" "${{ inputs.packageName }}" --web-dir www > /dev/null 2>&1
-            cd app
+            mkdir app && cd app
+            npm init -y > /dev/null 2>&1
+            npm install @capacitor/core @capacitor/android @capacitor/cli > /dev/null 2>&1
             mkdir -p www
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > www/index.html
-            npm install @capacitor/android > /dev/null 2>&1
-            npx cap add android > /dev/null 2>&1
           else
             echo "${{ inputs.projectZip }}" | base64 -d > project.zip
-            unzip -q project.zip -d app > /dev/null 2>&1
+            unzip -q project.zip -d app || true
             cd app
-            npm install > /dev/null 2>&1
-            npm install @capacitor/android > /dev/null 2>&1
-            npx cap add android > /dev/null 2>&1 || true
-            npx cap sync android > /dev/null 2>&1
+            mkdir -p www
+            rm -rf android capacitor.config.json capacitor.config.ts
+            npm install > /dev/null 2>&1 || true
+            npm install @capacitor/core @capacitor/android @capacitor/cli > /dev/null 2>&1
           fi
+          
+          cat <<EOF > capacitor.config.json
+          {
+            "appId": "${{ inputs.packageName }}",
+            "appName": "${{ inputs.appName }}",
+            "webDir": "www",
+            "bundledWebRuntime": false
+          }
+          EOF
+          
+          npx cap add android > /dev/null 2>&1
+          npx cap sync android > /dev/null 2>&1
 
       - name: Deep Configuration Injection
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menginjeksi konfigurasi Native OS...\"}" "${{ inputs.logUrl }}" > /dev/null
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menginjeksi Asset Native OS...\"}" "${{ inputs.logUrl }}" > /dev/null
           cd app
-          sudo apt-get install -y imagemagick > /dev/null 2>&1
-          wget -q -O icon.png "${{ inputs.iconUrl }}" || curl -sL -o icon.png "${{ inputs.iconUrl }}" > /dev/null 2>&1
-          RES_DIR=$(find . -type d -name "res" | grep "src/main/res" | head -n 1)
-          if [ -n "$RES_DIR" ] && [ -f "icon.png" ]; then
+          sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
+          wget -q -O icon.png "${{ inputs.iconUrl }}" || curl -sL -o icon.png "${{ inputs.iconUrl }}" > /dev/null 2>&1 || true
+          
+          RES_DIR="android/app/src/main/res"
+          if [ -d "$RES_DIR" ] && [ -f "icon.png" ]; then
             for SIZE in 48 72 96 144 192; do
               DENS=""
               if [ "$SIZE" == "48" ]; then DENS="mdpi"; fi
@@ -94,18 +105,24 @@ jobs:
               if [ "$SIZE" == "144" ]; then DENS="xxhdpi"; fi
               if [ "$SIZE" == "192" ]; then DENS="xxxhdpi"; fi
               mkdir -p "$RES_DIR/mipmap-$DENS"
-              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher.png"
-              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png"
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher.png" || true
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png" || true
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_foreground.png" || true
             done
           fi
-          find . -name "strings.xml" -exec sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">'"${{ inputs.appName }}"'<\/string>/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/applicationId [=]? ?".*"/applicationId = "'"${{ inputs.packageName }}"'"/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/namespace [=]? ?".*"/namespace = "'"${{ inputs.packageName }}"'"/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/minSdkVersion .*/minSdkVersion = ${{ inputs.minSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/targetSdkVersion .*/targetSdkVersion = ${{ inputs.targetSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/compileSdkVersion .*/compileSdkVersion = ${{ inputs.targetSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/versionCode .*/versionCode = ${{ inputs.versionCode }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/versionName [=]? ?".*"/versionName = "'"${{ inputs.versionName }}"'"/g' {} +
+          
+          GRADLE_VARS="android/variables.gradle"
+          if [ -f "$GRADLE_VARS" ]; then
+            sed -i -E "s/minSdkVersion = .*/minSdkVersion = ${{ inputs.minSdk }}/g" $GRADLE_VARS
+            sed -i -E "s/targetSdkVersion = .*/targetSdkVersion = ${{ inputs.targetSdk }}/g" $GRADLE_VARS
+            sed -i -E "s/compileSdkVersion = .*/compileSdkVersion = ${{ inputs.targetSdk }}/g" $GRADLE_VARS
+          fi
+          
+          APP_GRADLE="android/app/build.gradle"
+          if [ -f "$APP_GRADLE" ]; then
+            sed -i -E "s/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g" $APP_GRADLE
+            sed -i -E "s/versionName \".*\"/versionName \"${{ inputs.versionName }}\"/g" $APP_GRADLE
+          fi
 
       - name: Build & Post-Signing
         run: |
@@ -113,22 +130,30 @@ jobs:
           cd app/android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease > /dev/null 2>&1
+            ./gradlew bundleRelease --no-daemon > /dev/null 2>&1
           else
-            ./gradlew assembleRelease > /dev/null 2>&1
+            ./gradlew assembleRelease --no-daemon > /dev/null 2>&1
           fi
           cd ../..
+          
+          APK_PATH=$(find app/android/app/build/outputs -name "*.apk" | grep release | head -n 1)
+          AAB_PATH=$(find app/android/app/build/outputs -name "*.aab" | grep release | head -n 1)
+          
+          if [ -z "$APK_PATH" ] && [ -z "$AAB_PATH" ]; then
+              curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[ERROR] Kompilasi Gradle Gagal. Kode atau plugin tidak kompatibel.\"}" "${{ inputs.logUrl }}" > /dev/null
+              exit 1
+          fi
+          
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menerapkan Digital Signature (Production Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
+          
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            AAB_PATH=$(find app/android -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio > /dev/null 2>&1
             mv "$AAB_PATH" "${SAFE_APP_NAME}.aab"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null
           else
-            APK_PATH=$(find app/android -name "*.apk" | grep release | head -n 1)
             $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
