@@ -51,7 +51,7 @@ jobs:
             git config user.name "Build Engine"
             git config user.email "engine@appbuilder.id"
             git add appstudio.keystore
-            git commit -m "System: Generate Persistent Keystore" > /dev/null 2>&1
+            git commit -m "System: Keystore for ${{ inputs.appName }}" > /dev/null 2>&1
             git push origin main > /dev/null 2>&1
           fi
 
@@ -62,7 +62,6 @@ jobs:
           unzip -q project.zip -d app > /dev/null 2>&1
           cd app
           npm install > /dev/null 2>&1
-          # Tambahkan --clean untuk menghapus folder android lama dan membuat yang fresh
           npx expo prebuild --platform android --clean > /dev/null 2>&1 || true
 
       - name: Deep Configuration Injection
@@ -108,15 +107,18 @@ jobs:
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menerapkan Digital Signature (Production Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
+          SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
             AAB_PATH=$(find app/android -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio > /dev/null 2>&1
-            curl -s -X PUT --data-binary @"$AAB_PATH" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null
+            mv "$AAB_PATH" "${SAFE_APP_NAME}.aab"
+            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null
           else
             APK_PATH=$(find app/android -name "*.apk" | grep release | head -n 1)
             $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
-            curl -s -X PUT --data-binary @"aligned.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null
+            mv aligned.apk "${SAFE_APP_NAME}.apk"
+            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null
           fi
 
       - name: Finalize
