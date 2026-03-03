@@ -20,6 +20,11 @@ on:
       targetSdk: { required: false, type: string, default: '34' }
 permissions:
   contents: write
+
+# [PERBAIKAN 1]: Mengatasi Node.js Out Of Memory saat Metro Bundling
+env:
+  NODE_OPTIONS: "--max-old-space-size=4096"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -59,21 +64,23 @@ jobs:
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           if [ ! -s assets/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > assets/icon.png; fi
           
-          # [PERBAIKAN 1]: Tambahkan index.js sebagai jembatan Native & React Component
           if [ ! -f "index.js" ]; then
             echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
           fi
           
-          # [PERBAIKAN 2]: Konfigurasi Babel wajib untuk kompilasi JSX saat build release
           if [ ! -f "babel.config.js" ]; then
             echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js
+          fi
+
+          # [PERBAIKAN 2]: Menambahkan Metro Config secara dinamis agar file .jsx berhasil dibundle
+          if [ ! -f "metro.config.js" ]; then
+            echo "const { getDefaultConfig } = require('expo/metro-config'); module.exports = getDefaultConfig(__dirname);" > metro.config.js
           fi
           
           if [ ! -f "app.json" ]; then echo "{}" > app.json; fi
           jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ("${{ inputs.versionCode }}" | tonumber) | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
           
-          # [PERBAIKAN 3]: Install depedensi build untuk metro bundler (babel & expo-preset)
-          npm install --save-dev @babel/core babel-preset-expo > /dev/null 2>&1 || true
+          npm install --save-dev @babel/core babel-preset-expo @expo/metro-config > /dev/null 2>&1 || true
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
@@ -111,7 +118,6 @@ jobs:
           
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           
-          # [PERBAIKAN 4]: Tambahkan EOF string agar tidak terganggu variable bash
           cat <<'EOF' >> android/build.gradle
           
           allprojects {
@@ -125,12 +131,23 @@ jobs:
           }
           EOF
           
-          # [PERBAIKAN 5]: Set argumen JVM untuk menstabilkan Build tanpa Memory Crash
           NODE_PATH=$(which node)
           echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> android/gradle.properties
           echo "org.gradle.daemon=false" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
+
+      # [PERBAIKAN 3]: Pre-Bundle Verifier. Menangkap *Real Error* dari JavaScript React Native.
+      - name: Verify JavaScript Bundle (Metro)
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Verifying JavaScript Assets & JSX Syntax...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          cd app
+          if ! npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android-bundle.js > bundle_log.txt 2>&1; then
+             ERROR_MSG=$(grep -E -A 10 "error: |SyntaxError|Error: |Module not found" bundle_log.txt || tail -n 15 bundle_log.txt)
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terjadi kesalahan Syntax atau Module pada JavaScript:
+          $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+             exit 1
+          fi
 
       - name: Turbo Release Compiler (With Safe Log Catcher)
         run: |
@@ -145,11 +162,9 @@ jobs:
           fi
           
           if ! $CMD > build_log.txt 2>&1; then
-            # [PERBAIKAN 6]: Grep regex agar error Javascript/Metro ikut tertangkap dalam log
             ERROR_MSG=$(grep -A 30 -E "What went wrong:|Exception:|Error:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package RN: 
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Kesalahan kompilasi Gradle native:
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
