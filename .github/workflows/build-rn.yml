@@ -23,7 +23,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: System Initialization
         run: |
@@ -59,8 +59,21 @@ jobs:
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           if [ ! -s assets/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > assets/icon.png; fi
           
+          # [PERBAIKAN 1]: Tambahkan index.js sebagai jembatan Native & React Component
+          if [ ! -f "index.js" ]; then
+            echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
+          fi
+          
+          # [PERBAIKAN 2]: Konfigurasi Babel wajib untuk kompilasi JSX saat build release
+          if [ ! -f "babel.config.js" ]; then
+            echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js
+          fi
+          
           if [ ! -f "app.json" ]; then echo "{}" > app.json; fi
           jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ("${{ inputs.versionCode }}" | tonumber) | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
+          
+          # [PERBAIKAN 3]: Install depedensi build untuk metro bundler (babel & expo-preset)
+          npm install --save-dev @babel/core babel-preset-expo > /dev/null 2>&1 || true
           
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
@@ -98,8 +111,8 @@ jobs:
           
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           
-          # Solusi untuk ERROR compileSdk 36 dan React Native path is null
-          cat <<EOF >> android/build.gradle
+          # [PERBAIKAN 4]: Tambahkan EOF string agar tidak terganggu variable bash
+          cat <<'EOF' >> android/build.gradle
           
           allprojects {
               configurations.all {
@@ -112,9 +125,12 @@ jobs:
           }
           EOF
           
+          # [PERBAIKAN 5]: Set argumen JVM untuk menstabilkan Build tanpa Memory Crash
           NODE_PATH=$(which node)
           echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
           echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> android/gradle.properties
+          echo "org.gradle.daemon=false" >> android/gradle.properties
+          echo "org.gradle.parallel=true" >> android/gradle.properties
 
       - name: Turbo Release Compiler (With Safe Log Catcher)
         run: |
@@ -123,15 +139,17 @@ jobs:
           chmod +x gradlew
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            CMD="./gradlew bundleRelease --parallel --no-daemon"
+            CMD="./gradlew bundleRelease --no-daemon"
           else
-            CMD="./gradlew assembleRelease --parallel --no-daemon"
+            CMD="./gradlew assembleRelease --no-daemon"
           fi
           
           if ! $CMD > build_log.txt 2>&1; then
-            ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            # [PERBAIKAN 6]: Grep regex agar error Javascript/Metro ikut tertangkap dalam log
+            ERROR_MSG=$(grep -A 30 -E "What went wrong:|Exception:|Error:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package RN:
+            
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package RN: 
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
@@ -147,13 +165,13 @@ jobs:
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
             FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
-            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
+            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore ../appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
-            $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
+            $APKSIGNER sign --ks ../appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
