@@ -52,7 +52,7 @@ jobs:
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
             git add appstudio.keystore
-            git commit -m "System: Generate Static Keystore (Do Not Delete)" > /dev/null 2>&1 || true
+            git commit -m "System: Generate Static Keystore" > /dev/null 2>&1 || true
             git push origin HEAD:main > /dev/null 2>&1 || true
           fi
 
@@ -88,17 +88,19 @@ jobs:
 
       - name: Deep Configuration & Icon Injection
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Config] Injecting HD Icons and App Manifest variables...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Config] Injecting HD Icons (Cache-Bust Mode) and App Manifest variables...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
-          # HAPUS SEMUA ICON BAWAAN AGAR TIDAK BENTROK
           RES_DIR="android/app/src/main/res"
-          rm -rf $RES_DIR/mipmap-anydpi-v26 2>/dev/null || true
-          find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
-          find $RES_DIR -name "ic_launcher*.webp" -delete 2>/dev/null || true
-          find $RES_DIR -name "ic_launcher*.png" -delete 2>/dev/null || true
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
           
-          # PAKSA GENERATE ULANG ICON KE FORMAT PNG
+          rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
+          
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon/g' $MANIFEST || true
+            sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon/g' $MANIFEST || true
+          fi
+          
           sudo apt-get install -y imagemagick > /dev/null 2>&1
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
@@ -108,19 +110,14 @@ jobs:
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher.png" || true
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher_round.png" || true
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher_foreground.png" || true
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon.png" || true
           done
           
-          # GANTI APP NAME DI STRINGS SECARA BRUTAL
-          find android/app/src/main/res -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
-          find android/app/src/main/res -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
+          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
+          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
           
-          # INJEKSI GRADLE VERSION
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [0-9]+/compileSdkVersion 35/g' {} + || true
           
           if [ -f "android/variables.gradle" ]; then
             sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' android/variables.gradle || true
