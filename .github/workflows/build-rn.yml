@@ -18,10 +18,10 @@ on:
       buildFormat: { required: false, type: string, default: 'apk' }
       minSdk: { required: false, type: string, default: '24' }
       targetSdk: { required: false, type: string, default: '34' }
+
 permissions:
   contents: write
 
-# [PERBAIKAN 1]: Mengatasi Node.js Out Of Memory saat Metro Bundling
 env:
   NODE_OPTIONS: "--max-old-space-size=4096"
 
@@ -31,8 +31,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: System Initialization
-        run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+        run: curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+        
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
@@ -64,24 +64,15 @@ jobs:
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           if [ ! -s assets/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > assets/icon.png; fi
           
-          if [ ! -f "index.js" ]; then
-            echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
-          fi
-          
-          if [ ! -f "babel.config.js" ]; then
-            echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js
-          fi
-
-          # [PERBAIKAN 2]: Menambahkan Metro Config secara dinamis agar file .jsx berhasil dibundle
-          if [ ! -f "metro.config.js" ]; then
-            echo "const { getDefaultConfig } = require('expo/metro-config'); module.exports = getDefaultConfig(__dirname);" > metro.config.js
-          fi
+          # Fallback config (Hanya berjalan jika user/editor belum membuat file ini)
+          if [ ! -f "index.js" ]; then echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js; fi
+          if [ ! -f "babel.config.js" ]; then echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js; fi
+          if [ ! -f "metro.config.js" ]; then echo "const { getDefaultConfig } = require('expo/metro-config'); module.exports = getDefaultConfig(__dirname);" > metro.config.js; fi
           
           if [ ! -f "app.json" ]; then echo "{}" > app.json; fi
           jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ("${{ inputs.versionCode }}" | tonumber) | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
           
-          npm install --save-dev @babel/core babel-preset-expo @expo/metro-config > /dev/null 2>&1 || true
-          
+          # Instalasi MURNI sesuai package.json bawaan
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM React Native: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
@@ -137,7 +128,6 @@ jobs:
           echo "org.gradle.daemon=false" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
 
-      # [PERBAIKAN 3]: Pre-Bundle Verifier. Menangkap *Real Error* dari JavaScript React Native.
       - name: Verify JavaScript Bundle (Metro)
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Verifying JavaScript Assets & JSX Syntax...\"}" "${{ inputs.logUrl }}" > /dev/null || true
@@ -149,7 +139,7 @@ jobs:
              exit 1
           fi
 
-      - name: Turbo Release Compiler (With Safe Log Catcher)
+      - name: Turbo Release Compiler
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
