@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21' # WAJIB JAVA 21 UNTUK CAPACITOR TERBARU & SDK 35
+          java-version: '21'
 
       - name: Persistent Static Keystore
         run: |
@@ -87,28 +87,36 @@ jobs:
           npm install @capacitor/core @capacitor/android @capacitor/cli --legacy-peer-deps > /dev/null 2>&1
           npx cap add android > /dev/null 2>&1
 
-      - name: Deep Configuration Injection
+      - name: Deep Configuration Injection (Icon & Name)
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menginjeksi Identitas OS Mendalam...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menginjeksi Identitas OS Mendalam (App Info & Icon)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
-          mkdir -p assets
-          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
-          cp assets/icon.png assets/splash.png
-          npm install @capacitor/assets --no-save > /dev/null 2>&1
-          npx @capacitor/assets generate --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff' > /dev/null 2>&1 || true
+          # [1] INJEKSI NAMA APLIKASI (Di Home Screen & App Info)
+          find android/app/src/main/res/values -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
+          find android/app/src/main/res/values -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
           
-          find android -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
-          find android -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
+          # [2] INJEKSI ICON SECARA PAKSA (ImageMagick Overwrite)
+          sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y imagemagick > /dev/null 2>&1
+          curl -sL "${{ inputs.iconUrl }}" -o temp_icon.png
+          RES_DIR="android/app/src/main/res"
+          if [ -d "$RES_DIR" ]; then
+            for DENS in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
+              NAME=${DENS%:*}
+              SIZE=${DENS#*:}
+              mkdir -p "$RES_DIR/mipmap-$NAME"
+              convert temp_icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$NAME/ic_launcher.png" || true
+              convert temp_icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$NAME/ic_launcher_round.png" || true
+            done
+          fi
           
+          # [3] KONFIGURASI SDK & VERSI
           find android -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
           find android -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
           find android -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [0-9]+/compileSdkVersion 35/g' {} + || true
-          
           if [ -f "android/variables.gradle" ]; then
             sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' android/variables.gradle || true
             sed -i -E 's/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g' android/variables.gradle || true
-            # WAJIB COMPILE SDK 35 UNTUK SUPPORT LIBRARY TERBARU
             sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g' android/variables.gradle || true
           fi
 
