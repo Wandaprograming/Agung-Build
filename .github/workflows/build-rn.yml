@@ -54,27 +54,28 @@ jobs:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Provisioning Workspace & Expo Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          mkdir -p app/www
           echo "$ZIP_B64" | base64 -d -i > project.zip
-          unzip -q -o project.zip -d app/www/
-          
-          mv app/www/* app/ 2>/dev/null || true
-          mv app/www/.* app/ 2>/dev/null || true
-          
+          unzip -q -o project.zip -d app/
           cd app
+          
+          if [ ! -f "package.json" ]; then
+            echo '{"name":"app","version":"1.0.0"}' > package.json
+          fi
+          
+          npm install expo react-native react --legacy-peer-deps > /dev/null 2>&1 || true
+          npm install --legacy-peer-deps > /dev/null 2>&1 || true
+          
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           
           if [ ! -f "app.json" ]; then
-            echo "{}" > app.json
+            echo '{"expo":{}}' > app.json
           fi
           
           jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ${{ inputs.versionCode }} | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
           
-          npm install --legacy-peer-deps > /dev/null 2>&1
-          
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Translating JavaScript to Native Bindings...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          npx expo prebuild --platform android --clean > /dev/null 2>&1
+          npx expo prebuild --platform android --clean > /dev/null 2>&1 || true
 
       - name: Deep Identity Injection & SDK Lockdown
         run: |
@@ -99,6 +100,9 @@ jobs:
           done
           
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g' {} + || true
           
           cat <<EOF >> android/app/build.gradle
           
@@ -111,16 +115,16 @@ jobs:
           }
           EOF
 
-      - name: Turbo Release Compiler (With Safe Log Catcher)
+      - name: Turbo Release Compiler
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            ./gradlew bundleRelease --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
           else
-            ./gradlew assembleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            ./gradlew assembleRelease --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
