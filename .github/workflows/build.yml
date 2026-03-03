@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '17' # Wajib Java 17 untuk Capacitor/React Native
 
       - name: Persistent Static Keystore
         run: |
@@ -107,7 +107,8 @@ jobs:
           if [ -f "android/variables.gradle" ]; then
             sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' android/variables.gradle || true
             sed -i -E 's/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g' android/variables.gradle || true
-            sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = ${{ inputs.targetSdk }}/g' android/variables.gradle || true
+            # WAJIB COMPILE SDK 35 UNTUK SUPPORT LIBRARY TERBARU
+            sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g' android/variables.gradle || true
           fi
 
       - name: Compile Release Build
