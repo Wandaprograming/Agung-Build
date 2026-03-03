@@ -40,17 +40,17 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'zulu', java-version: '17' }
 
-      # [PERCEPATAN WAKTU BUILD]: Menyimpan Cache Gradle & NPM agar build berikutnya super cepat (hemat ~7 menit)
-      - name: Cache Gradle & NPM Engine
+      - name: Cache Build Engine (NPM & Gradle)
         uses: actions/cache@v4
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
             ~/.npm
-          key: ${{ runner.os }}-build-cache-v1
+            app/node_modules
+          key: ${{ runner.os }}-rn-build-v2-${{ hashFiles('**/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-build-cache-
+            ${{ runner.os }}-rn-build-v2-
 
       - name: Production Keystore Vault
         run: |
@@ -77,15 +77,9 @@ jobs:
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           if [ ! -s assets/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > assets/icon.png; fi
           
-          if [ ! -f "index.js" ]; then
-            echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js
-          fi
-          if [ ! -f "babel.config.js" ]; then
-            echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js
-          fi
-          if [ ! -f "metro.config.js" ]; then
-            echo "const { getDefaultConfig } = require('expo/metro-config'); module.exports = getDefaultConfig(__dirname);" > metro.config.js
-          fi
+          if [ ! -f "index.js" ]; then echo "import { registerRootComponent } from 'expo'; import App from './App'; registerRootComponent(App);" > index.js; fi
+          if [ ! -f "babel.config.js" ]; then echo "module.exports = function(api) { api.cache(true); return { presets: ['babel-preset-expo'] }; };" > babel.config.js; fi
+          if [ ! -f "metro.config.js" ]; then echo "const { getDefaultConfig } = require('expo/metro-config'); module.exports = getDefaultConfig(__dirname);" > metro.config.js; fi
           
           if [ ! -f "app.json" ]; then echo "{}" > app.json; fi
           jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ("${{ inputs.versionCode }}" | tonumber) | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
@@ -105,7 +99,6 @@ jobs:
 
       - name: Deep Identity Injection & SDK Lockdown
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -141,21 +134,10 @@ jobs:
           
           NODE_PATH=$(which node)
           echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
-          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m" >> android/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC" >> android/gradle.properties
           echo "org.gradle.daemon=false" >> android/gradle.properties
           echo "org.gradle.parallel=true" >> android/gradle.properties
           echo "org.gradle.caching=true" >> android/gradle.properties
-
-      - name: Verify JavaScript Bundle (Metro)
-        run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Verifying JavaScript Assets & JSX Syntax...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          cd app
-          if ! npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android-bundle.js > bundle_log.txt 2>&1; then
-             ERROR_MSG=$(grep -E -A 10 "error: |SyntaxError|Error: |Module not found" bundle_log.txt || tail -n 15 bundle_log.txt)
-             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terjadi kesalahan Syntax atau Module pada JavaScript:
-          $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
-             exit 1
-          fi
 
       - name: Turbo Release Compiler
         run: |
@@ -170,9 +152,10 @@ jobs:
           fi
           
           if ! $CMD > build_log.txt 2>&1; then
-            ERROR_MSG=$(grep -A 30 -E "What went wrong:|Exception:|Error:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            # Regex pencari error ini sudah digabung agar menangkap Error Javascript & Gradle sekaligus
+            ERROR_MSG=$(grep -E -A 25 "error: |SyntaxError|Module not found|What went wrong:|Exception:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Kesalahan kompilasi Gradle native:
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terjadi kesalahan Kompilasi/Syntax:
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
@@ -186,7 +169,6 @@ jobs:
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           
-          # [PERBAIKAN ERROR SIGNER]: Menggunakan path 'appstudio.keystore'
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
             FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
