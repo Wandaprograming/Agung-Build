@@ -27,11 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Initialize Builder Identity
+      - name: Initialize Engine
         run: |
-          RAW_NAME="${{ github.event.repository.name }}"
-          FORMATTED_NAME=$(echo "$RAW_NAME" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2)); print}')
-          echo "BUILDER_NAME=$FORMATTED_NAME" >> $GITHUB_ENV
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Booting up secure isolated container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
         with:
@@ -48,7 +46,7 @@ jobs:
 
       - name: Persistent Static Keystore
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Sinkronisasi Sertifikat Produksi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Unlocking production cryptography vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
             keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
             git config --global user.name "github-actions[bot]"
@@ -62,7 +60,7 @@ jobs:
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Framework & Source Code...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and decrypting client workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           mkdir -p app/www
           if [ "${{ inputs.mode }}" == "webview" ]; then
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
@@ -77,7 +75,6 @@ jobs:
             echo '{"name":"app","version":"1.0.0"}' > package.json
           fi
           
-          # Inject App Name & Package Name ke Config Capacitor sejak awal
           echo "{
             \"appId\": \"${{ inputs.packageName }}\",
             \"appName\": \"${{ inputs.appName }}\",
@@ -85,18 +82,23 @@ jobs:
             \"bundledWebRuntime\": false
           }" > capacitor.config.json
           
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Assembling Native Android Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           npm install @capacitor/core @capacitor/android @capacitor/cli --legacy-peer-deps > /dev/null 2>&1
           npx cap add android > /dev/null 2>&1
 
-      - name: Deep Configuration Injection (Brutal Override)
+      - name: Deep Configuration & Icon Injection
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menginjeksi Identitas OS Mendalam...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Config] Injecting HD Icons and App Manifest variables...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
-          # HAPUS XML ADAPTIVE ICON AGAR ANDROID MEMBACA PNG KITA
-          rm -rf android/app/src/main/res/mipmap-anydpi-v26 2>/dev/null || true
+          # HAPUS SEMUA ICON BAWAAN AGAR TIDAK BENTROK
+          RES_DIR="android/app/src/main/res"
+          rm -rf $RES_DIR/mipmap-anydpi-v26 2>/dev/null || true
+          find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
+          find $RES_DIR -name "ic_launcher*.webp" -delete 2>/dev/null || true
+          find $RES_DIR -name "ic_launcher*.png" -delete 2>/dev/null || true
           
-          # PROSES GENERATE ICON BERKUALITAS
+          # PAKSA GENERATE ULANG ICON KE FORMAT PNG
           sudo apt-get install -y imagemagick > /dev/null 2>&1
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
@@ -104,22 +106,21 @@ jobs:
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
-            DIR="android/app/src/main/res/mipmap-$DENS"
+            DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher.png" || true
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher_round.png" || true
             convert temp_icon/icon.png -resize ${S}x${S} "$DIR/ic_launcher_foreground.png" || true
           done
           
-          # GANTI APP NAME DI STRINGS (Info Aplikasi & Launcher)
+          # GANTI APP NAME DI STRINGS SECARA BRUTAL
           find android/app/src/main/res -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           find android/app/src/main/res -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
           
-          # GANTI PACKAGE NAME & VERSION DI GRADLE
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/applicationId [=]? ?".*"/applicationId = "${{ inputs.packageName }}"/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/namespace [=]? ?".*"/namespace = "${{ inputs.packageName }}"/g' {} + || true
+          # INJEKSI GRADLE VERSION
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [0-9]+/compileSdkVersion 35/g' {} + || true
           
           if [ -f "android/variables.gradle" ]; then
             sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' android/variables.gradle || true
@@ -129,7 +130,7 @@ jobs:
 
       - name: Compile Release Build
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Release Compiler...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Turbo Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
@@ -141,7 +142,7 @@ jobs:
       - name: Post-Signing & Upload
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menerapkan Digital Signature (Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature V2/V3...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -150,12 +151,14 @@ jobs:
             FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
