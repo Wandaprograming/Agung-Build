@@ -32,10 +32,35 @@ jobs:
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
+      
+      # [PERCEPATAN WAKTU BUILD]: Simpan cache library dart & engine gradle
+      - name: Cache Build Engine (Pub & Gradle)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.pub-cache
+          key: ${{ runner.os }}-flutter-build-v1-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-build-v1-
+
       - uses: subosito/flutter-action@v2
         with: { channel: 'stable' }
       - uses: actions/setup-java@v4
         with: { distribution: 'zulu', java-version: '17' }
+
+      - name: Production Keystore Vault
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          if [ ! -f "appstudio.keystore" ]; then
+            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add appstudio.keystore
+            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
+            git push origin HEAD:main > /dev/null 2>&1 || true
+          fi
 
       - name: Prepare Workspace & Config
         env:
@@ -64,6 +89,8 @@ jobs:
           sudo apt-get install -y imagemagick > /dev/null 2>&1
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
+          if [ ! -s temp_icon/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > temp_icon/icon.png; fi
+          
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -74,17 +101,25 @@ jobs:
           
           find android/app/src/main -type f -name "AndroidManifest.xml" -exec sed -i 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
           
-          # FORCE DEPENDENCY LOCKDOWN
-          cat <<EOF >> android/app/build.gradle
+          # [PERBAIKAN 1]: Inject dependensi ke root android/build.gradle agar struktur syntax tetap valid
+          cat <<'EOF' >> android/build.gradle
           
-          configurations.all {
-              resolutionStrategy {
-                  force 'androidx.browser:browser:1.8.0'
-                  force 'androidx.core:core-ktx:1.13.1'
-                  force 'androidx.core:core:1.13.1'
+          allprojects {
+              configurations.all {
+                  resolutionStrategy {
+                      force 'androidx.browser:browser:1.8.0'
+                      force 'androidx.core:core-ktx:1.13.1'
+                      force 'androidx.core:core:1.13.1'
+                  }
               }
           }
           EOF
+          
+          # [PERBAIKAN 2]: Atur Argumen JVM Gradle agar tidak Out Of Memory
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC" >> android/gradle.properties
+          echo "org.gradle.daemon=false" >> android/gradle.properties
+          echo "org.gradle.parallel=true" >> android/gradle.properties
+          echo "org.gradle.caching=true" >> android/gradle.properties
 
       - name: Turbo Release Compiler (With Safe Log Catcher)
         env:
@@ -101,9 +136,10 @@ jobs:
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
-            ERROR_MSG=$(grep -A 30 "FAILURE:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            # Menangkap log error dengan regex yang lebih komprehensif
+            ERROR_MSG=$(grep -A 30 -E "FAILURE:|Exception:|What went wrong:|error: " build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan kompilasi Flutter/Gradle:
             
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
@@ -113,7 +149,6 @@ jobs:
         if: success()
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature & Uploading...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1 || true
           
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
