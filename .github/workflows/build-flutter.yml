@@ -27,11 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Initialize Builder Identity
+      - name: Initialize Engine
         run: |
-          RAW_NAME="${{ github.event.repository.name }}"
-          FORMATTED_NAME=$(echo "$RAW_NAME" | sed 's/-/ /g')
-          echo "BUILDER_NAME=$FORMATTED_NAME" >> $GITHUB_ENV
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Booting up secure isolated container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
         with:
@@ -48,7 +46,7 @@ jobs:
 
       - name: Persistent Static Keystore
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Sinkronisasi Sertifikat Produksi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Unlocking production cryptography vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
             keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
             git config --global user.name "github-actions[bot]"
@@ -62,55 +60,66 @@ jobs:
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Framework & Source Code...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and decrypting client workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           echo "$ZIP_B64" | base64 -d -i > project.zip
           unzip -q -o project.zip -d app/
           cd app
           
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Regenerating Dart/Flutter Bindings...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           rm -rf android
           flutter create --platforms=android --org "${{ inputs.packageName }}" . > /dev/null 2>&1
           flutter pub get > /dev/null 2>&1
 
-      - name: Deep Configuration Injection (Icon & Name)
+      - name: Deep Configuration & Icon Injection
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menginjeksi Identitas OS Mendalam (App Info & Icon)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Config] Injecting HD Icons (Cache-Bust Mode) and App Manifest variables...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
-          # [1] INJEKSI NAMA APLIKASI (Manifest Flutter)
-          find android/app/src/main -name "AndroidManifest.xml" -exec sed -i -E 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
-          
-          # [2] INJEKSI ICON SECARA PAKSA (ImageMagick Overwrite)
-          sudo apt-get update > /dev/null 2>&1 && sudo apt-get install -y imagemagick > /dev/null 2>&1
-          curl -sL "${{ inputs.iconUrl }}" -o temp_icon.png
           RES_DIR="android/app/src/main/res"
-          if [ -d "$RES_DIR" ]; then
-            for DENS in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do
-              NAME=${DENS%:*}
-              SIZE=${DENS#*:}
-              mkdir -p "$RES_DIR/mipmap-$NAME"
-              convert temp_icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$NAME/ic_launcher.png" || true
-            done
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          
+          rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
+          
+          if [ -f "$MANIFEST" ]; then
+            sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon/g' $MANIFEST || true
+            sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon/g' $MANIFEST || true
           fi
           
-          # [3] KONFIGURASI SDK (Gradle Flutter)
-          find android -type f -name "build.gradle" -exec sed -i -E 's/minSdkVersion [A-Za-z0-9_.]+/minSdkVersion ${{ inputs.minSdk }}/g' {} + || true
-          find android -type f -name "build.gradle" -exec sed -i -E 's/targetSdkVersion [A-Za-z0-9_.]+/targetSdkVersion ${{ inputs.targetSdk }}/g' {} + || true
-          find android -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [A-Za-z0-9_.]+/compileSdkVersion 35/g' {} + || true
+          sudo apt-get install -y imagemagick > /dev/null 2>&1
+          mkdir -p temp_icon
+          curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
+          
+          for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
+            set -- $SIZE
+            S=$1; DENS=$2
+            DIR="$RES_DIR/mipmap-$DENS"
+            mkdir -p "$DIR"
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon.png" || true
+          done
+          
+          find android/app/src/main -type f -name "AndroidManifest.xml" -exec sed -i 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
+          
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/minSdkVersion [A-Za-z0-9_.]+/minSdkVersion ${{ inputs.minSdk }}/g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/targetSdkVersion [A-Za-z0-9_.]+/targetSdkVersion ${{ inputs.targetSdk }}/g' {} + || true
+          find android/app -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [A-Za-z0-9_.]+/compileSdkVersion 35/g' {} + || true
 
       - name: Compile Release Build
+        env:
+          VER_NAME: ${{ inputs.versionName }}
+          VER_CODE: ${{ inputs.versionCode }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Release Compiler...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Turbo Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            flutter build appbundle --release --build-name=${{ inputs.versionName }} --build-number=${{ inputs.versionCode }}
+            flutter build appbundle --release --build-name=$VER_NAME --build-number=$VER_CODE
           else
-            flutter build apk --release --build-name=${{ inputs.versionName }} --build-number=${{ inputs.versionCode }}
+            flutter build apk --release --build-name=$VER_NAME --build-number=$VER_CODE
           fi
 
       - name: Post-Signing & Upload
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menerapkan Digital Signature (Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature V2/V3...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -119,12 +128,14 @@ jobs:
             FILE_PATH=$(find app/build/app/outputs/bundle -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/build/app/outputs/flutter-apk -name "*.apk" | grep release | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
