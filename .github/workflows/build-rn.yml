@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: System Initialization
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure RN Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,61 +45,60 @@ jobs:
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
             git add appstudio.keystore
-            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
+            git commit -m "System: Generate Static Keystore" > /dev/null 2>&1 || true
             git push origin HEAD:main > /dev/null 2>&1 || true
           fi
 
-      - name: Provision Workspace & Smart Injection
+      - name: Prepare Workspace & Config
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Provisioning Workspace & Expo Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          mkdir -p app/www
           echo "$ZIP_B64" | base64 -d -i > project.zip
-          unzip -q -o project.zip -d app/
-          cd app
+          unzip -q -o project.zip -d app/www/
           
+          mv app/www/* app/ 2>/dev/null || true
+          mv app/www/.* app/ 2>/dev/null || true
+          
+          cd app
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           
-          # Smart Injection menggunakan Node.js (Anti-Crash)
-          node -e "
-          const fs = require('fs');
-          let app = { expo: {} };
-          try { app = JSON.parse(fs.readFileSync('app.json', 'utf8')); } catch(e){}
-          app.expo.name = '${{ inputs.appName }}';
-          app.expo.slug = '${{ inputs.packageName }}'.replace(/\./g, '-');
-          app.expo.version = '${{ inputs.versionName }}';
-          app.expo.icon = './assets/icon.png';
-          app.expo.android = app.expo.android || {};
-          app.expo.android.package = '${{ inputs.packageName }}';
-          app.expo.android.versionCode = parseInt('${{ inputs.versionCode }}');
-          app.expo.android.adaptiveIcon = { foregroundImage: './assets/icon.png', backgroundColor: '#ffffff' };
-          fs.writeFileSync('app.json', JSON.stringify(app, null, 2));
-          "
-          
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Dependencies] Installing Node Modules...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          npm install --legacy-peer-deps > npm_log.txt 2>&1 || export NPM_FAIL=1
-          if [ "$NPM_FAIL" == "1" ]; then
-            ERROR_MSG=$(tail -n 20 npm_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g')
-            node -e "fetch('${{ inputs.logUrl }}', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ id: '${{ inputs.id }}', log: \`[BUILD FAILED] NPM Error:\n\n\${process.env.ERROR_MSG}\` }) });" || true
-            exit 1
+          if [ ! -f "app.json" ]; then
+            echo "{}" > app.json
           fi
+          
+          jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ${{ inputs.versionCode }} | .expo.icon = "./assets/icon.png"' app.json > tmp.json && mv tmp.json app.json || true
+          
+          npm install --legacy-peer-deps > /dev/null 2>&1
           
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Translating JavaScript to Native Bindings...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          npx expo prebuild --platform android --clean > pb_log.txt 2>&1 || export PB_FAIL=1
-          if [ "$PB_FAIL" == "1" ]; then
-            ERROR_MSG=$(tail -n 20 pb_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g')
-            node -e "fetch('${{ inputs.logUrl }}', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ id: '${{ inputs.id }}', log: \`[BUILD FAILED] Prebuild Error:\n\n\${process.env.ERROR_MSG}\` }) });" || true
-            exit 1
-          fi
+          npx expo prebuild --platform android --clean > /dev/null 2>&1
 
-      - name: Deep SDK Lockdown
+      - name: Deep Identity Injection & SDK Lockdown
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
-          # Hapus Adaptive Icon Bawaan agar diganti versi HD
-          rm -rf android/app/src/main/res/mipmap-anydpi* 2>/dev/null || true
+          RES_DIR="android/app/src/main/res"
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          
+          rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
+          sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
+          sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
+          
+          sudo apt-get install -y imagemagick > /dev/null 2>&1
+          for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
+            set -- $SIZE
+            S=$1; DENS=$2
+            DIR="$RES_DIR/mipmap-$DENS"
+            mkdir -p "$DIR"
+            convert assets/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
+            convert assets/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
+          done
+          
+          find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           
           cat <<EOF >> android/app/build.gradle
           
@@ -112,7 +111,7 @@ jobs:
           }
           EOF
 
-      - name: Turbo Release Compiler (Smart Error Catcher)
+      - name: Turbo Release Compiler (With Safe Log Catcher)
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
@@ -125,16 +124,19 @@ jobs:
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
-            export ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
-            if [ -z "$ERROR_MSG" ]; then export ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
-            node -e "fetch('${{ inputs.logUrl }}', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ id: '${{ inputs.id }}', log: \`[BUILD FAILED] Terdapat kesalahan pada kode/package Anda:\n\n\${process.env.ERROR_MSG}\` }) });" || true
+            ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
+            
+          $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
 
       - name: Artifact Signer & Delivery
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature V2/V3...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature & Uploading...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -143,14 +145,12 @@ jobs:
             FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
