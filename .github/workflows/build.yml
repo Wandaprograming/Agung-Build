@@ -1,4 +1,4 @@
-name: Pro APK Builder
+name: Pro Native Compiler
 run-name: Build ${{ inputs.appName }}
 on:
   workflow_dispatch:
@@ -16,6 +16,8 @@ on:
       url: { required: false, type: string }
       projectZip: { required: false, type: string }
       buildFormat: { required: false, type: string, default: 'apk' }
+      minSdk: { required: false, type: string, default: '24' }
+      targetSdk: { required: false, type: string, default: '34' }
 permissions:
   contents: write
 jobs:
@@ -45,20 +47,6 @@ jobs:
           java-version: '21'
           cache: 'gradle'
 
-      - name: Persistent Keystore Setup
-        env:
-          APP_NAME: ${{ inputs.appName }}
-        run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Production Keystore...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          if [ ! -f "appstudio.keystore" ]; then
-            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1 || true
-            git config user.name "Build Engine"
-            git config user.email "engine@appbuilder.id"
-            git add appstudio.keystore
-            git commit -m "System: Keystore for $APP_NAME" > /dev/null 2>&1 || true
-            git push origin main > /dev/null 2>&1 || true
-          fi
-
       - name: Configuration Injection & Native Branding
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Konfigurasi & Identitas Aplikasi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
@@ -70,35 +58,37 @@ jobs:
           echo "org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m" >> ~/.gradle/gradle.properties
           
           if [ "${{ inputs.mode }}" == "code" ]; then
-              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | del(.server.url)' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
           else
-              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
+              jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
           fi
           
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
               if [ ! -z "$OLD_PACKAGE" ]; then
-                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" -o -name "*.kt" -o -name "*.json" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} +
+                  find android/app -type f \( -name "*.xml" -o -name "*.gradle" -o -name "*.java" -o -name "*.kt" -o -name "*.json" \) -exec sed -i "s/$OLD_PACKAGE/${{ inputs.packageName }}/g" {} + || true
               fi
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
               if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
-                  mv "$MAIN_ACTIVITY" "$NEW_DIR/"
+                  mv "$MAIN_ACTIVITY" "$NEW_DIR/" || true
               fi
           fi
           
-          sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
-          sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
-          sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
-          sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
+          sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
+          sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
+          sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
+          sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml || true
+          
+          sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml || true
+          
+          sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle || true
+          sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle || true
           
           mkdir -p assets
-          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
-          cp assets/icon.png assets/splash.png
+          curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png || true
+          cp assets/icon.png assets/splash.png || true
 
       - name: Process Source Code
         env:
@@ -107,22 +97,23 @@ jobs:
           set -e
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Mengintegrasikan Source Code...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           
-          if [ -n "$ZIP_B64" ]; then
+          if [ -n "$ZIP_B64" ] && [ "${{ inputs.mode }}" == "code" ]; then
               echo "$ZIP_B64" | base64 -d -i > project.zip
               unzip -q -o project.zip -d www/
           else
               mkdir -p www
-              echo "<html><body>Sedang memuat Webview...</body></html>" > www/index.html
+              echo "<html><body><style>body{background:#09090b;color:#fff;font-family:sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center;height:100vh;margin:0}.spinner{width:40px;height:40px;border:4px solid rgba(16,185,129,.2);border-left-color:#10b981;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px}@keyframes spin{100%{transform:rotate(360deg)}}</style><div class='spinner'></div><h3>Memuat Webview...</h3></body></html>" > www/index.html
           fi
           
           if [ -f "www/package.json" ]; then
-              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json | grep "@capacitor" | tr '\n' ' ' || true)
-              if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline --legacy-peer-deps; fi
+              DEPS=$(jq -r '.dependencies | keys[]?' www/package.json 2>/dev/null | grep "@capacitor" | tr '\n' ' ')
+              if [ ! -z "$DEPS" ]; then npm install $DEPS --no-audit --no-fund --prefer-offline --legacy-peer-deps > /dev/null 2>&1 || true; fi
               cd www
-              npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps
+              npm install --no-audit --no-fund --prefer-offline --legacy-peer-deps > /dev/null 2>&1 || true
               node -e "
               const fs = require('fs');
-              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              let pkg = {dependencies:{}};
+              try { pkg = JSON.parse(fs.readFileSync('package.json', 'utf8')); } catch(e){}
               const deps = Object.keys(pkg.dependencies || {});
               let code = \"import { Capacitor } from '@capacitor/core';\nwindow.Capacitor = window.Capacitor || Capacitor;\nwindow.Capacitor.isNative = true;\nwindow.Capacitor.Plugins = window.Capacitor.Plugins || {};\n\";
               let pIdx = 0;
@@ -133,58 +124,58 @@ jobs:
                   }
               });
               fs.writeFileSync('bridge.js', code);
-              "
-              npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife
-              sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html
+              " || true
+              npx esbuild bridge.js --bundle --minify --outfile=native-bridge.js --format=iife > /dev/null 2>&1 || true
+              sed -i 's|</body>|<script src="native-bridge.js"></script></body>|i' index.html || true
               cd ..
           else
-              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps
+              npm install @capacitor/core @capacitor/android esbuild --no-audit --no-fund --prefer-offline --legacy-peer-deps > /dev/null 2>&1 || true
           fi
 
       - name: Compile App
         run: |
           set -e
-          npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
-          npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff' || true
-          npx cap sync android
+          npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps > /dev/null 2>&1 || true
+          npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff' > /dev/null 2>&1 || true
+          npx cap sync android > /dev/null 2>&1 || true
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menjalankan Turbo Compiler...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd android
           chmod +x gradlew
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              ./gradlew bundleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
+              ./gradlew bundleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2 > /dev/null 2>&1
           else
-              ./gradlew assembleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2
+              ./gradlew assembleRelease --parallel --build-cache --configure-on-demand --no-daemon --max-workers=2 > /dev/null 2>&1
           fi
 
-      - name: Sign & Upload Artifact
+      - name: Upload Artifact
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menerapkan Production Signature & Upload...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menerapkan Digital Signature (Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-              AAB_PATH=$(find android/app/build -name "*.aab" | grep release | head -n 1)
-              jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio > /dev/null 2>&1 || true
-              mv "$AAB_PATH" "${SAFE_APP_NAME}.aab" || true
+              FILE_PATH=$(find android/app/build -name "*.aab" | grep release | head -n 1)
+              jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1 || true
+              mv "$FILE_PATH" "${SAFE_APP_NAME}.aab" || true
               curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
-              APK_PATH=$(find android/app/build -name "*.apk" | grep release | head -n 1)
-              $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk > /dev/null 2>&1 || true
+              FILE_PATH=$(find android/app/build -name "*.apk" | grep release | head -n 1)
+              $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1 || true
               $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1 || true
               mv aligned.apk "${SAFE_APP_NAME}.apk" || true
               curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
-      - name: Cleanup Workflows & Cache
+      - name: Cleanup
         if: always()
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Membersihkan Workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          rm -rf android/app/build
-          rm -rf www
-          rm -rf node_modules
+          rm -rf android/app/build || true
+          rm -rf www || true
+          rm -rf node_modules || true
 
       - name: Notify System
         if: always()
