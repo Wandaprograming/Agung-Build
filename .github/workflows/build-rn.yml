@@ -53,17 +53,20 @@ jobs:
             git config user.name "Build Engine"
             git config user.email "engine@appbuilder.id"
             git add appstudio.keystore
-            git commit -m "System: Keystore for ${{ inputs.appName }}" > /dev/null 2>&1
+            git commit -m "System: Generate Keystore" > /dev/null 2>&1
             git push origin main > /dev/null 2>&1
           fi
 
       - name: Prepare Workspace
+        env:
+          ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset dan regenerasi OS Native...\"}" "${{ inputs.logUrl }}" > /dev/null
-          echo "${{ inputs.projectZip }}" | base64 -d > project.zip
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset dan menyiapkan environment...\"}" "${{ inputs.logUrl }}" > /dev/null
+          echo "$ZIP_B64" | base64 -d -i > project.zip
           unzip -q project.zip -d app > /dev/null 2>&1
           cd app
           npm install > /dev/null 2>&1
+          # Karena file app.json dan package.json sudah ada, kita langsung prebuild
           npx expo prebuild --platform android --clean > /dev/null 2>&1 || true
 
       - name: Deep Configuration Injection
@@ -106,7 +109,7 @@ jobs:
             ./gradlew assembleRelease > /dev/null 2>&1
           fi
           cd ../..
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menerapkan Digital Signature (Production Keystore)...\"}" "${{ inputs.logUrl }}" > /dev/null
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menerapkan Digital Signature...\"}" "${{ inputs.logUrl }}" > /dev/null
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
