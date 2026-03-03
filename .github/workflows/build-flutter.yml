@@ -32,46 +32,27 @@ jobs:
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
-        with:
-          token: ${{ github.token }}
-
       - uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-
+        with: { channel: 'stable' }
       - uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17' # Flutter Android stabil di Java 17
+        with: { distribution: 'zulu', java-version: '17' }
 
-      - name: Production Keystore Vault
-        run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          if [ ! -f "appstudio.keystore" ]; then
-            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
-            git config --global user.name "github-actions[bot]"
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git add appstudio.keystore
-            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
-            git push origin HEAD:main > /dev/null 2>&1 || true
-          fi
-
-      - name: Provision Workspace & Dart Bindings
+      - name: Prepare Workspace & Config
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Provisioning Workspace & Flutter Bindings...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           echo "$ZIP_B64" | base64 -d -i > project.zip
           unzip -q -o project.zip -d app/
           cd app
           
-          rm -rf android 2>/dev/null || true
+          rm -rf android
           flutter create --platforms=android --org "${{ inputs.packageName }}" . > /dev/null 2>&1
           flutter pub get > /dev/null 2>&1
 
       - name: Deep Identity Injection & Icon Cache-Buster
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Absolute Identity & Cache-Busted HD Icons...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
           RES_DIR="android/app/src/main/res"
@@ -83,7 +64,6 @@ jobs:
           sudo apt-get install -y imagemagick > /dev/null 2>&1
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
-          
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -94,27 +74,47 @@ jobs:
           
           find android/app/src/main -type f -name "AndroidManifest.xml" -exec sed -i 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
           
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/minSdkVersion [A-Za-z0-9_.]+/minSdkVersion ${{ inputs.minSdk }}/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/targetSdkVersion [A-Za-z0-9_.]+/targetSdkVersion ${{ inputs.targetSdk }}/g' {} + || true
-          find android/app -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion [A-Za-z0-9_.]+/compileSdkVersion 35/g' {} + || true
+          # FORCE DEPENDENCY LOCKDOWN
+          cat <<EOF >> android/app/build.gradle
+          
+          configurations.all {
+              resolutionStrategy {
+                  force 'androidx.browser:browser:1.8.0'
+                  force 'androidx.core:core-ktx:1.13.1'
+                  force 'androidx.core:core:1.13.1'
+              }
+          }
+          EOF
 
-      - name: Turbo Release Compiler
+      - name: Turbo Release Compiler (With Safe Log Catcher)
         env:
           VER_NAME: ${{ inputs.versionName }}
           VER_CODE: ${{ inputs.versionCode }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Fresh Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Flutter Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
+          
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            flutter build appbundle --release --build-name=$VER_NAME --build-number=$VER_CODE
+            flutter build appbundle --release --build-name=$VER_NAME --build-number=$VER_CODE > build_log.txt 2>&1 || export BUILD_FAILED=1
           else
-            flutter build apk --release --build-name=$VER_NAME --build-number=$VER_CODE
+            flutter build apk --release --build-name=$VER_NAME --build-number=$VER_CODE > build_log.txt 2>&1 || export BUILD_FAILED=1
+          fi
+          
+          if [ "$BUILD_FAILED" == "1" ]; then
+            ERROR_MSG=$(grep -A 30 "FAILURE:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+            if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
+            
+          $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
+            exit 1
           fi
 
       - name: Artifact Signer & Delivery
         if: success()
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature V2/V3...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature & Uploading...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1 || true
+          
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
@@ -123,14 +123,12 @@ jobs:
             FILE_PATH=$(find app/build/app/outputs/bundle -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/build/app/outputs/flutter-apk -name "*.apk" | grep release | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
