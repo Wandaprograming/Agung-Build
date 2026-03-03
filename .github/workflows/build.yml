@@ -37,31 +37,77 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'zulu', java-version: '21' }
 
-      - name: Prepare Workspace & Config
+      # [PERCEPATAN WAKTU BUILD]: Menyimpan Cache NPM & Gradle
+      - name: Cache Build Engine (NPM & Gradle)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.npm
+            app/node_modules
+          key: ${{ runner.os }}-cap-build-v1-${{ hashFiles('**/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-cap-build-v1-
+
+      - name: Production Keystore Vault
+        run: |
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          if [ ! -f "appstudio.keystore" ]; then
+            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add appstudio.keystore
+            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
+            git push origin HEAD:main > /dev/null 2>&1 || true
+          fi
+
+      - name: Prepare Workspace (Pure User Code)
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           mkdir -p app/www
+          
           if [ "${{ inputs.mode }}" == "webview" ]; then
+            # Mode Webview dibuat dinamis
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
-            echo '{"name":"webview-app","version":"1.0.0"}' > app/package.json
+            echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
+            # Mengekstrak murni kode dari user studio
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
-            mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0"}' > app/package.json
+            mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
+            mv app/www/studio.config.json app/ 2>/dev/null || true
           fi
           
           cd app
-          echo "{ \"appId\": \"${{ inputs.packageName }}\", \"appName\": \"${{ inputs.appName }}\", \"webDir\": \"www\", \"bundledWebRuntime\": false }" > capacitor.config.json
+          # Menyelaraskan Config dasar saja (agar UI web tetap nyambung)
+          if [ ! -f "capacitor.config.json" ]; then
+            echo "{ \"appId\": \"${{ inputs.packageName }}\", \"appName\": \"${{ inputs.appName }}\", \"webDir\": \"www\", \"bundledWebRuntime\": false }" > capacitor.config.json
+          else
+            jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
+          fi
           
-          npm install @capacitor/core @capacitor/android @capacitor/cli --legacy-peer-deps > /dev/null 2>&1
-          npx cap add android > /dev/null 2>&1
+          # HANYA NPM INSTALL MURNI (Tidak ada paksaan define package)
+          if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
+             ERROR_MSG=$(tail -n 20 npm_log.txt)
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             exit 1
+          fi
+          
+          # Menjalankan Capacitor CLI secara aman
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Capacitor Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
+             ERROR_MSG=$(tail -n 20 cap_log.txt)
+             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Capacitor: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
+             exit 1
+          fi
 
-      - name: Deep Identity Injection & SDK Lockdown
+      - name: Deep Identity Injection & Icon Sync
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Locking stable SDK dependencies...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Identity & Config...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
@@ -72,9 +118,11 @@ jobs:
           sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
           sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
-          sudo apt-get install -y imagemagick > /dev/null 2>&1
+          sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
+          if [ ! -s temp_icon/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > temp_icon/icon.png; fi
+          
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -89,17 +137,12 @@ jobs:
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
           
-          # FORCE DEPENDENCY LOCKDOWN UNTUK MENCEGAH ERROR SDK 36
-          cat <<EOF >> android/app/build.gradle
-          
-          configurations.all {
-              resolutionStrategy {
-                  force 'androidx.browser:browser:1.8.0'
-                  force 'androidx.core:core-ktx:1.13.1'
-                  force 'androidx.core:core:1.13.1'
-              }
-          }
-          EOF
+          NODE_PATH=$(which node)
+          echo "NODE_BINARY=$NODE_PATH" >> android/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m -XX:+UseParallelGC" >> android/gradle.properties
+          echo "org.gradle.daemon=false" >> android/gradle.properties
+          echo "org.gradle.parallel=true" >> android/gradle.properties
+          echo "org.gradle.caching=true" >> android/gradle.properties
 
       - name: Turbo Release Compiler (With Safe Log Catcher)
         run: |
@@ -108,19 +151,16 @@ jobs:
           chmod +x gradlew
           
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            CMD="./gradlew bundleRelease --parallel --no-daemon"
           else
-            ./gradlew assembleRelease --parallel --no-daemon > build_log.txt 2>&1 || export BUILD_FAILED=1
+            CMD="./gradlew assembleRelease --parallel --no-daemon"
           fi
           
-          if [ "$BUILD_FAILED" == "1" ]; then
-            # Ambil log error, sembunyikan path github action
-            ERROR_MSG=$(grep -A 30 "What went wrong:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
+          if ! $CMD > build_log.txt 2>&1; then
+            ERROR_MSG=$(grep -E -A 25 "What went wrong:|Exception:|FAILURE:|error:" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
             
-            # Kirim log aman ke terminal client
-            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan pada pengaturan/package Anda:
-            
+            jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terjadi kesalahan Kompilasi/Syntax:
           $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}" > /dev/null || true
             exit 1
           fi
@@ -129,7 +169,6 @@ jobs:
         if: success()
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature & Uploading...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1 || true
           
           ZIPALIGN=$(find $ANDROID_SDK_ROOT/build-tools -name zipalign | sort -V | tail -n 1)
           APKSIGNER=$(find $ANDROID_SDK_ROOT/build-tools -name apksigner | sort -V | tail -n 1)
