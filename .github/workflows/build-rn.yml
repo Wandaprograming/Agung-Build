@@ -44,7 +44,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
       - name: Persistent Static Keystore
         run: |
@@ -58,31 +58,31 @@ jobs:
             git push origin HEAD:main > /dev/null 2>&1 || true
           fi
 
-      - name: Prepare Workspace & Config
+      - name: Prepare Workspace & Prebuild Config
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Framework & Source Code...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menyiapkan Framework & Injeksi Icon...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           echo "$ZIP_B64" | base64 -d -i > project.zip
           unzip -q -o project.zip -d app/
           cd app
           
+          mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png > /dev/null 2>&1
           
-          jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ${{ inputs.versionCode }}' app.json > tmp.json && mv tmp.json app.json || true
+          # [1] EXPO PREBUILD CONFIG INJECTION (Nama & Icon)
+          jq '.expo.name = "${{ inputs.appName }}" | .expo.android.package = "${{ inputs.packageName }}" | .expo.version = "${{ inputs.versionName }}" | .expo.android.versionCode = ${{ inputs.versionCode }} | .expo.icon = "./assets/icon.png" | .expo.android.adaptiveIcon.foregroundImage = "./assets/icon.png" | .expo.android.adaptiveIcon.backgroundColor = "#FFFFFF"' app.json > tmp.json && mv tmp.json app.json || true
           
           npm install --legacy-peer-deps > /dev/null 2>&1
+          # [2] EXPO MEN-GENERATE FOLDER ANDROID BESERTA ICONNYA SECARA OTOMATIS
           npx expo prebuild --platform android --clean > /dev/null 2>&1
 
-      - name: Deep Configuration Injection
+      - name: Deep Configuration SDK (Gradle)
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[${{ env.BUILDER_NAME }}] Menginjeksi Identitas OS Mendalam...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
-          
-          find android -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           find android -type f -name "build.gradle" -exec sed -i -E 's/minSdkVersion = [0-9]+/minSdkVersion = ${{ inputs.minSdk }}/g' {} + || true
           find android -type f -name "build.gradle" -exec sed -i -E 's/targetSdkVersion = [0-9]+/targetSdkVersion = ${{ inputs.targetSdk }}/g' {} + || true
-          find android -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = ${{ inputs.targetSdk }}/g' {} + || true
+          find android -type f -name "build.gradle" -exec sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g' {} + || true
 
       - name: Compile Release Build
         run: |
