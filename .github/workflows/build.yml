@@ -51,46 +51,49 @@ jobs:
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Memverifikasi sertifikat kriptografi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
-            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1 || true
+            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
             git config user.name "Build Engine"
             git config user.email "engine@appbuilder.id"
             git add appstudio.keystore
-            git commit -m "System: Keystore for $APP_NAME" > /dev/null 2>&1 || true
-            git push origin main > /dev/null 2>&1 || true
+            git commit -m "System: Keystore for $APP_NAME" > /dev/null 2>&1
+            git push origin main > /dev/null 2>&1
           fi
 
       - name: Prepare Workspace
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset aplikasi...\"}" "${{ inputs.logUrl }}" > /dev/null || true
-          
-          # Install global capacitor & ignore errors to prevent crash
-          npm install -g @capacitor/cli @capacitor/core > /dev/null 2>&1 || true
-          
-          mkdir -p app
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset dan menyiapkan framework...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          npm install -g @capacitor/cli @capacitor/core
           if [ "${{ inputs.mode }}" == "webview" ]; then
-            npx cap create app "App" "${{ inputs.packageName }}" --web-dir www > /dev/null 2>&1 || true
+            npx cap create app "App" "${{ inputs.packageName }}" --web-dir www
             cd app
             mkdir -p www
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > www/index.html
-            npm install @capacitor/android > /dev/null 2>&1 || true
-            npx cap add android > /dev/null 2>&1 || true
+            npm install @capacitor/android
+            npx cap add android
           else
-            echo "$ZIP_B64" | base64 -d > project.zip || true
-            unzip -q project.zip -d app > /dev/null 2>&1 || true
+            echo "$ZIP_B64" | base64 -d -i > project.zip
+            unzip -q project.zip -d app
             cd app
             
-            # Use || true to prevent script termination if npm fails
-            npm install > /dev/null 2>&1 || true
+            npm install --force
+            npm install @capacitor/android @capacitor/core @capacitor/cli --force
             
+            # Jika config capacitor tidak ada, buat otomatis
             if [ ! -f "capacitor.config.json" ] && [ ! -f "capacitor.config.ts" ]; then
-              npx cap init "${{ inputs.appName }}" "${{ inputs.packageName }}" --web-dir . > /dev/null 2>&1 || true
+              echo '{ "appId": "${{ inputs.packageName }}", "appName": "${{ inputs.appName }}", "webDir": "www", "bundledWebRuntime": false }' > capacitor.config.json
             fi
             
-            npm install @capacitor/android > /dev/null 2>&1 || true
-            npx cap add android > /dev/null 2>&1 || true
-            npx cap sync android > /dev/null 2>&1 || true
+            # Bungkus semua source code user ke dalam folder www agar capacitor tidak error
+            mkdir -p www
+            if [ -f "index.html" ]; then
+              cp -r * www/ 2>/dev/null || true
+              rm -rf www/www www/node_modules www/android 2>/dev/null || true
+            fi
+            
+            npx cap add android
+            npx cap sync android
           fi
 
       - name: Deep Configuration Injection
@@ -104,8 +107,8 @@ jobs:
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menginjeksi konfigurasi Native OS...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
-          sudo apt-get install -y imagemagick > /dev/null 2>&1 || true
-          wget -q -O icon.png "${{ inputs.iconUrl }}" || curl -sL -o icon.png "${{ inputs.iconUrl }}" > /dev/null 2>&1 || true
+          sudo apt-get install -y imagemagick > /dev/null 2>&1
+          wget -q -O icon.png "${{ inputs.iconUrl }}" || curl -sL -o icon.png "${{ inputs.iconUrl }}" > /dev/null 2>&1
           RES_DIR=$(find . -type d -name "res" | grep "src/main/res" | head -n 1)
           if [ -n "$RES_DIR" ] && [ -f "icon.png" ]; then
             for SIZE in 48 72 96 144 192; do
@@ -116,8 +119,8 @@ jobs:
               if [ "$SIZE" == "144" ]; then DENS="xxhdpi"; fi
               if [ "$SIZE" == "192" ]; then DENS="xxxhdpi"; fi
               mkdir -p "$RES_DIR/mipmap-$DENS"
-              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher.png" || true
-              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png" || true
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher.png"
+              convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png"
             done
           fi
           find . -name "strings.xml" -exec sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">'"$APP_NAME"'<\/string>/g' {} + || true
@@ -146,15 +149,15 @@ jobs:
           SAFE_APP_NAME=$(echo "${{ inputs.appName }}" | sed 's/[^a-zA-Z0-9]/_/g')
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
             AAB_PATH=$(find app/android -name "*.aab" | grep release | head -n 1)
-            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio > /dev/null 2>&1 || true
-            mv "$AAB_PATH" "${SAFE_APP_NAME}.aab" || true
-            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
+            jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$AAB_PATH" appstudio > /dev/null 2>&1
+            mv "$AAB_PATH" "${SAFE_APP_NAME}.aab"
+            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null
           else
             APK_PATH=$(find app/android -name "*.apk" | grep release | head -n 1)
-            $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk > /dev/null 2>&1 || true
-            $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1 || true
-            mv aligned.apk "${SAFE_APP_NAME}.apk" || true
-            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
+            $ZIPALIGN -p -f -v 4 "$APK_PATH" aligned.apk > /dev/null 2>&1
+            $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
+            mv aligned.apk "${SAFE_APP_NAME}.apk"
+            curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null
           fi
 
       - name: Finalize
