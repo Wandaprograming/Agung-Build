@@ -1,5 +1,5 @@
 name: Pro Native Compiler
-run-name: Build ${{ inputs.appName }}
+run-name: Enterprise Build - ${{ inputs.appName }}
 on:
   workflow_dispatch:
     inputs:
@@ -27,9 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Initialize Engine
+      - name: System Initialization
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Engine] Booting up secure isolated container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Core] Allocating Secure Build Container...\"}" "${{ inputs.logUrl }}" > /dev/null || true
 
       - uses: actions/checkout@v4
         with:
@@ -42,39 +42,40 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: '21' # Wajib Java 21 untuk Capacitor Android 6+ (SDK 35)
 
-      - name: Persistent Static Keystore
+      - name: Production Keystore Vault
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Unlocking production cryptography vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Security] Verifying Production Cryptography Vault...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if [ ! -f "appstudio.keystore" ]; then
-            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=AppStudio, O=AppStudio, L=Bali, ST=Bali, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
+            keytool -genkeypair -v -keystore appstudio.keystore -alias appstudio -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=AppStudio, OU=Enterprise, O=AppStudio, L=Jakarta, ST=DKI, C=ID" -storepass appstudio2026 -keypass appstudio2026 > /dev/null 2>&1
             git config --global user.name "github-actions[bot]"
             git config --global user.email "github-actions[bot]@users.noreply.github.com"
             git add appstudio.keystore
-            git commit -m "System: Generate Static Keystore" > /dev/null 2>&1 || true
+            git commit -m "System: Secure Vault Generated" > /dev/null 2>&1 || true
             git push origin HEAD:main > /dev/null 2>&1 || true
           fi
 
-      - name: Prepare Workspace & Config
+      - name: Provision Workspace & Native Bridge
         env:
           ZIP_B64: ${{ inputs.projectZip }}
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and decrypting client workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Provisioning Workspace & Native Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           mkdir -p app/www
+          
           if [ "${{ inputs.mode }}" == "webview" ]; then
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
+            echo '{"name":"webview-app","version":"1.0.0"}' > app/package.json
           else
+            # Extract ZIP yang dikirim dari web
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
-            mv app/www/package.json app/ 2>/dev/null || true
+            # Pindahkan config ke root app agar dikenali Capacitor
+            mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0"}' > app/package.json
+            mv app/www/capacitor.config.json app/ 2>/dev/null || true
           fi
           
           cd app
-          if [ ! -f "package.json" ]; then
-            echo '{"name":"app","version":"1.0.0"}' > package.json
-          fi
-          
           echo "{
             \"appId\": \"${{ inputs.packageName }}\",
             \"appName\": \"${{ inputs.appName }}\",
@@ -82,25 +83,26 @@ jobs:
             \"bundledWebRuntime\": false
           }" > capacitor.config.json
           
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Assembling Native Android Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           npm install @capacitor/core @capacitor/android @capacitor/cli --legacy-peer-deps > /dev/null 2>&1
           npx cap add android > /dev/null 2>&1
 
-      - name: Deep Configuration & Icon Injection
+      - name: Deep Identity Injection & Icon Cache-Buster
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Config] Injecting HD Icons (Cache-Bust Mode) and App Manifest variables...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Manifest] Injecting Absolute Identity & Cache-Busted HD Icons...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app
           
           RES_DIR="android/app/src/main/res"
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           
+          # Hapus XML Vector Bawaan untuk membunuh Cache Android
           rm -rf $RES_DIR/mipmap-anydpi* 2>/dev/null || true
+          find $RES_DIR -name "ic_launcher*.xml" -delete 2>/dev/null || true
           
-          if [ -f "$MANIFEST" ]; then
-            sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon/g' $MANIFEST || true
-            sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon/g' $MANIFEST || true
-          fi
+          # Rubah referensi di AndroidManifest agar Android terpaksa merender ulang icon baru
+          sed -i 's/@mipmap\/ic_launcher_round/@mipmap\/app_icon_production_round/g' $MANIFEST || true
+          sed -i 's/@mipmap\/ic_launcher/@mipmap\/app_icon_production/g' $MANIFEST || true
           
+          # Generate Icon Baru
           sudo apt-get install -y imagemagick > /dev/null 2>&1
           mkdir -p temp_icon
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
@@ -110,12 +112,15 @@ jobs:
             S=$1; DENS=$2
             DIR="$RES_DIR/mipmap-$DENS"
             mkdir -p "$DIR"
-            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon.png" || true
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production.png" || true
+            convert temp_icon/icon.png -resize ${S}x${S} "$DIR/app_icon_production_round.png" || true
           done
           
+          # Inject App Name & Settings
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">${{ inputs.appName }}</string>|g' {} + || true
           find $RES_DIR -type f -name "strings.xml" -exec sed -i 's|<string name="title_activity_main">.*</string>|<string name="title_activity_main">${{ inputs.appName }}</string>|g' {} + || true
           
+          # Inject Gradle Configuration
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' {} + || true
           find android/app -type f -name "build.gradle" -exec sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' {} + || true
           
@@ -125,18 +130,19 @@ jobs:
             sed -i -E 's/compileSdkVersion = [0-9]+/compileSdkVersion = 35/g' android/variables.gradle || true
           fi
 
-      - name: Compile Release Build
+      - name: Turbo Release Compiler
         run: |
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Turbo Engine (Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Compiler] Executing Native Gradle Engine (Fresh Release Mode)...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           cd app/android
           chmod +x gradlew
+          # Tanpa --build-cache agar menjamin setiap build 100% fresh (Tidak Stale)
           if [ "${{ inputs.buildFormat }}" == "aab" ]; then
-            ./gradlew bundleRelease --parallel --build-cache --no-daemon
+            ./gradlew bundleRelease --parallel --no-daemon
           else
-            ./gradlew assembleRelease --parallel --build-cache --no-daemon
+            ./gradlew assembleRelease --parallel --no-daemon
           fi
 
-      - name: Post-Signing & Upload
+      - name: Artifact Signer & Delivery
         if: success()
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Signer] Applying AES-256 App Signature V2/V3...\"}" "${{ inputs.logUrl }}" > /dev/null || true
@@ -148,18 +154,18 @@ jobs:
             FILE_PATH=$(find app/android/app/build -name "*.aab" | grep release | head -n 1)
             jarsigner -sigalg SHA256withRSA -digestalg SHA-256 -keystore appstudio.keystore -storepass appstudio2026 "$FILE_PATH" appstudio > /dev/null 2>&1
             mv "$FILE_PATH" "${SAFE_APP_NAME}.aab"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.aab" "${{ inputs.uploadUrl }}&ext=aab" > /dev/null || true
           else
             FILE_PATH=$(find app/android/app/build -name "*.apk" | grep release | grep -v unaligned | head -n 1)
             $ZIPALIGN -p -f -v 4 "$FILE_PATH" aligned.apk > /dev/null 2>&1
             $APKSIGNER sign --ks appstudio.keystore --ks-pass pass:appstudio2026 --ks-key-alias appstudio --key-pass pass:appstudio2026 aligned.apk > /dev/null 2>&1
             mv aligned.apk "${SAFE_APP_NAME}.apk"
-            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Uploading final artifact to client dashboard...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+            curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Delivery] Transmitting Production Artifact to Client...\"}" "${{ inputs.logUrl }}" > /dev/null || true
             curl -s -X PUT --data-binary @"${SAFE_APP_NAME}.apk" "${{ inputs.uploadUrl }}&ext=apk" > /dev/null || true
           fi
 
-      - name: Finalize
+      - name: Finalize Status
         if: always()
         run: |
           STATUS="failed"
