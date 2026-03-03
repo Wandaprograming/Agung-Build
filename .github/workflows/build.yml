@@ -46,6 +46,8 @@ jobs:
           cache: 'gradle'
           
       - name: Persistent Keystore Setup
+        env:
+          APP_NAME: ${{ inputs.appName }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Memverifikasi sertifikat kriptografi...\"}" "${{ inputs.logUrl }}" > /dev/null
           if [ ! -f "appstudio.keystore" ]; then
@@ -53,11 +55,13 @@ jobs:
             git config user.name "Build Engine"
             git config user.email "engine@appbuilder.id"
             git add appstudio.keystore
-            git commit -m "System: Keystore for ${{ inputs.appName }}" > /dev/null 2>&1
+            git commit -m "System: Keystore for $APP_NAME" > /dev/null 2>&1
             git push origin main > /dev/null 2>&1
           fi
 
       - name: Prepare Workspace
+        env:
+          ZIP_B64: ${{ inputs.projectZip }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Mengekstrak aset aplikasi...\"}" "${{ inputs.logUrl }}" > /dev/null
           if [ "${{ inputs.mode }}" == "webview" ]; then
@@ -69,7 +73,7 @@ jobs:
             npm install @capacitor/android > /dev/null 2>&1
             npx cap add android > /dev/null 2>&1
           else
-            echo "${{ inputs.projectZip }}" | base64 -d > project.zip
+            echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q project.zip -d app > /dev/null 2>&1
             cd app
             npm install > /dev/null 2>&1
@@ -79,6 +83,13 @@ jobs:
           fi
 
       - name: Deep Configuration Injection
+        env:
+          APP_NAME: ${{ inputs.appName }}
+          PKG_NAME: ${{ inputs.packageName }}
+          MIN_SDK: ${{ inputs.minSdk }}
+          TARGET_SDK: ${{ inputs.targetSdk }}
+          VER_CODE: ${{ inputs.versionCode }}
+          VER_NAME: ${{ inputs.versionName }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"${{ env.PREFIX }} Menginjeksi konfigurasi Native OS...\"}" "${{ inputs.logUrl }}" > /dev/null
           cd app
@@ -98,14 +109,14 @@ jobs:
               convert icon.png -resize ${SIZE}x${SIZE} "$RES_DIR/mipmap-$DENS/ic_launcher_round.png"
             done
           fi
-          find . -name "strings.xml" -exec sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">'"${{ inputs.appName }}"'<\/string>/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/applicationId [=]? ?".*"/applicationId = "'"${{ inputs.packageName }}"'"/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/namespace [=]? ?".*"/namespace = "'"${{ inputs.packageName }}"'"/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/minSdkVersion .*/minSdkVersion = ${{ inputs.minSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/targetSdkVersion .*/targetSdkVersion = ${{ inputs.targetSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/compileSdkVersion .*/compileSdkVersion = ${{ inputs.targetSdk }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/versionCode .*/versionCode = ${{ inputs.versionCode }}/g' {} +
-          find . -name "build.gradle" -exec sed -i -E 's/versionName [=]? ?".*"/versionName = "'"${{ inputs.versionName }}"'"/g' {} +
+          find . -name "strings.xml" -exec sed -i 's/<string name="app_name">.*<\/string>/<string name="app_name">'"$APP_NAME"'<\/string>/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/applicationId [=]? ?".*"/applicationId = "'"$PKG_NAME"'"/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/namespace [=]? ?".*"/namespace = "'"$PKG_NAME"'"/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/minSdkVersion .*/minSdkVersion = '"$MIN_SDK"'/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/targetSdkVersion .*/targetSdkVersion = '"$TARGET_SDK"'/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/compileSdkVersion .*/compileSdkVersion = '"$TARGET_SDK"'/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/versionCode .*/versionCode = '"$VER_CODE"'/g' {} +
+          find . -name "build.gradle" -exec sed -i -E 's/versionName [=]? ?".*"/versionName = "'"$VER_NAME"'"/g' {} +
 
       - name: Build & Post-Signing
         run: |
