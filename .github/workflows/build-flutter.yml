@@ -64,14 +64,28 @@ jobs:
       - name: Prepare Workspace & Config
         env:
           ZIP_B64: ${{ inputs.projectZip }}
+          USER_PKG: ${{ inputs.packageName }}
         run: |
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Source] Fetching and provisioning workspace...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           echo "$ZIP_B64" | base64 -d -i > project.zip
           unzip -q -o project.zip -d app/
           cd app
           
+          # [PERBAIKAN PACKAGE NAME]: Memisahkan Package Name dari user agar sesuai standar Native Android Flutter
+          ORG_NAME="${USER_PKG%.*}"
+          APP_DIR_NAME="${USER_PKG##*.}"
+          if [ "$ORG_NAME" == "$APP_DIR_NAME" ]; then ORG_NAME="com"; fi
+          
+          # Membersihkan nama app agar valid menurut standar Dart
+          DART_PKG_NAME=$(echo "$APP_DIR_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9_]/_/g')
+          
+          # Menginjeksi nama Dart yang benar ke pubspec.yaml
+          sed -i -E "s/^name: .*/name: $DART_PKG_NAME/g" pubspec.yaml
+          
           rm -rf android
-          flutter create --platforms=android --org "${{ inputs.packageName }}" . > /dev/null 2>&1
+          
+          # Render ulang Android Manifest menggunakan parameter org yang dinamis!
+          flutter create --platforms=android --org "$ORG_NAME" . > /dev/null 2>&1
           flutter pub get > /dev/null 2>&1
 
       - name: Deep Identity Injection & Icon Cache-Buster
@@ -86,7 +100,6 @@ jobs:
           curl -sL "${{ inputs.iconUrl }}" -o temp_icon/icon.png > /dev/null 2>&1
           if [ ! -s temp_icon/icon.png ]; then echo "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=" | base64 -d > temp_icon/icon.png; fi
           
-          # [PERBAIKAN 1]: Mengganti icon bawaan Flutter tanpa mengubah Manifest, lengkap dengan copy (cp) fallback jika convert gagal
           for SIZE in "48 mdpi" "72 hdpi" "96 xhdpi" "144 xxhdpi" "192 xxxhdpi"; do
             set -- $SIZE
             S=$1; DENS=$2
@@ -98,7 +111,6 @@ jobs:
           
           find android/app/src/main -type f -name "AndroidManifest.xml" -exec sed -i 's|android:label="[^"]*"|android:label="${{ inputs.appName }}"|g' {} + || true
           
-          # [PERBAIKAN 2]: Konfigurasi target SDK khusus ke Flutter local.properties
           echo "flutter.minSdkVersion=${{ inputs.minSdk }}" >> android/local.properties
           echo "flutter.targetSdkVersion=${{ inputs.targetSdk }}" >> android/local.properties
           
@@ -122,7 +134,6 @@ jobs:
           fi
           
           if [ "$BUILD_FAILED" == "1" ]; then
-            # Menangkap log error dengan regex yang lebih akurat untuk Flutter/Dart
             ERROR_MSG=$(grep -A 30 -E "FAILURE:|Exception:|What went wrong:|error: |Could not resolve" build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g' || echo "")
             if [ -z "$ERROR_MSG" ]; then ERROR_MSG=$(tail -n 30 build_log.txt | sed 's|/home/runner/work/[^/]*/[^/]*/|Workspace/|g'); fi
             jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Terdapat kesalahan kompilasi Flutter/Gradle:
