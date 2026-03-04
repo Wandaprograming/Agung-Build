@@ -33,7 +33,6 @@ jobs:
 
       - uses: actions/checkout@v4
       
-      # [PERBAIKAN ERROR]: Menaikkan versi Node.js ke 22 sesuai syarat mutlak Capacitor CLI terbaru
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
         
@@ -109,7 +108,12 @@ jobs:
              exit 1
           fi
           
+          # [PERBAIKAN]: Mengeksekusi setup.js untuk membuat file capacitor-runtime.js
           if [ -f "setup.js" ]; then node setup.js || true; fi
+          
+          # [KUNCI RAHASIA API NATIVE]: Memasukkan file capacitor-runtime.js yang baru dibuat ke dalam perut APK Android!
+          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Sync] Finalizing Web-to-Native Assets...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          npx cap copy android > /dev/null 2>&1 || true
 
       - name: Deep Identity Injection & Icon Sync
         run: |
