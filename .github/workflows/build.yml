@@ -37,7 +37,6 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'zulu', java-version: '21' }
 
-      # [PERCEPATAN WAKTU BUILD]: Menyimpan Cache NPM & Gradle
       - name: Cache Build Engine (NPM & Gradle)
         uses: actions/cache@v4
         with:
@@ -46,9 +45,9 @@ jobs:
             ~/.gradle/wrapper
             ~/.npm
             app/node_modules
-          key: ${{ runner.os }}-cap-build-v1-${{ hashFiles('**/package.json') }}
+          key: ${{ runner.os }}-cap-build-v2-${{ hashFiles('**/package.json') }}
           restore-keys: |
-            ${{ runner.os }}-cap-build-v1-
+            ${{ runner.os }}-cap-build-v2-
 
       - name: Production Keystore Vault
         run: |
@@ -70,40 +69,48 @@ jobs:
           mkdir -p app/www
           
           if [ "${{ inputs.mode }}" == "webview" ]; then
-            # Mode Webview dibuat dinamis
             echo "<script>window.location.href='${{ inputs.url }}';</script>" > app/www/index.html
             echo '{"name":"webview-app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
           else
-            # Mengekstrak murni kode dari user studio
             echo "$ZIP_B64" | base64 -d -i > project.zip
             unzip -q -o project.zip -d app/www/
+            
+            # Memindahkan file konfigurasi inti dari dalam www/ ke root proyek
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
+            
+            # [PERBAIKAN ERROR]: Memindahkan setup.js ke root agar NPM tidak error MODULE_NOT_FOUND
+            mv app/www/setup.js app/ 2>/dev/null || true
+          fi
+          
+          # Menyesuaikan Path Manifest untuk script setup.js
+          if [ -f "app/setup.js" ]; then
+             sed -i "s|../android/app/|./android/app/|g" app/setup.js
           fi
           
           cd app
-          # Menyelaraskan Config dasar saja (agar UI web tetap nyambung)
           if [ ! -f "capacitor.config.json" ]; then
             echo "{ \"appId\": \"${{ inputs.packageName }}\", \"appName\": \"${{ inputs.appName }}\", \"webDir\": \"www\", \"bundledWebRuntime\": false }" > capacitor.config.json
           else
             jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www"' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json || true
           fi
           
-          # HANYA NPM INSTALL MURNI (Tidak ada paksaan define package)
           if ! npm install --no-audit --no-fund --legacy-peer-deps > npm_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 npm_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal menginstall package NPM: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
           
-          # Menjalankan Capacitor CLI secara aman
           curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Bridge] Injecting Native Capacitor Bridge...\"}" "${{ inputs.logUrl }}" > /dev/null || true
           if ! npx --yes @capacitor/cli add android > cap_log.txt 2>&1; then
              ERROR_MSG=$(tail -n 20 cap_log.txt)
              jq -n --arg id "${{ inputs.id }}" --arg log "[BUILD FAILED] Gagal merakit Bridge Capacitor: $ERROR_MSG" '{"id": $id, "log": $log}' | curl -s -X POST -H "Content-Type: application/json" -d @- "${{ inputs.logUrl }}"
              exit 1
           fi
+          
+          # [PERBAIKAN]: Menjalankan setup.js SECARA MANUAL SETELAH file Android Manifest tercipta!
+          if [ -f "setup.js" ]; then node setup.js || true; fi
 
       - name: Deep Identity Injection & Icon Sync
         run: |
