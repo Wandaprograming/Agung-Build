@@ -80,7 +80,6 @@ jobs:
             mv app/www/package.json app/ 2>/dev/null || echo '{"name":"app","version":"1.0.0","dependencies":{"@capacitor/core":"latest","@capacitor/android":"latest"},"devDependencies":{"@capacitor/cli":"latest"}}' > app/package.json
             mv app/www/capacitor.config.json app/ 2>/dev/null || true
             mv app/www/studio.config.json app/ 2>/dev/null || true
-            
             mv app/www/setup.js app/ 2>/dev/null || true
           fi
           
@@ -108,12 +107,10 @@ jobs:
              exit 1
           fi
           
-          # [PERBAIKAN]: Mengeksekusi setup.js untuk membuat file capacitor-runtime.js
-          if [ -f "setup.js" ]; then node setup.js || true; fi
-          
-          # [KUNCI RAHASIA API NATIVE]: Memasukkan file capacitor-runtime.js yang baru dibuat ke dalam perut APK Android!
-          curl -s -X POST -H "Content-Type: application/json" -d "{\"id\": \"${{ inputs.id }}\", \"log\": \"[Sync] Finalizing Web-to-Native Assets...\"}" "${{ inputs.logUrl }}" > /dev/null || true
+          # [PERBAIKAN NATIVE API CAPACITOR] - Copy file bridge secara eksplisit 
           npx cap copy android > /dev/null 2>&1 || true
+          
+          if [ -f "setup.js" ]; then node setup.js || true; fi
 
       - name: Deep Identity Injection & Icon Sync
         run: |
