@@ -106,37 +106,33 @@ jobs:
                   mv "$MAIN_ACTIVITY" "$NEW_DIR/"
               fi
               
-              # [PERBAIKAN 2] Timpa MainActivity.java dengan Custom Logic Back Button
-              cat << 'EOF' > "$NEW_DIR/MainActivity.java"
-package ${{ inputs.packageName }};
-
-import android.os.Bundle;
-import android.webkit.WebView;
-import android.widget.Toast;
-import com.getcapacitor.BridgeActivity;
-
-public class MainActivity extends BridgeActivity {
-    private long backPressedTime = 0;
-
-    @Override
-    public void onBackPressed() {
-        WebView webView = this.bridge.getWebView();
-        // Cek apakah webview punya history untuk mundur
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            // Logika Double Click untuk Keluar
-            long t = System.currentTimeMillis();
-            if (t - backPressedTime > 2000) {
-                backPressedTime = t;
-                Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
-            } else {
-                super.onBackPressed();
-            }
-        }
-    }
-}
-EOF
+              # [PERBAIKAN 2] Timpa MainActivity.java dengan Metode Echo Multiline agar YAML tidak error
+              echo "package ${{ inputs.packageName }};
+              
+              import android.os.Bundle;
+              import android.webkit.WebView;
+              import android.widget.Toast;
+              import com.getcapacitor.BridgeActivity;
+              
+              public class MainActivity extends BridgeActivity {
+                  private long backPressedTime = 0;
+              
+                  @Override
+                  public void onBackPressed() {
+                      WebView webView = this.bridge.getWebView();
+                      if (webView != null && webView.canGoBack()) {
+                          webView.goBack();
+                      } else {
+                          long t = System.currentTimeMillis();
+                          if (t - backPressedTime > 2000) {
+                              backPressedTime = t;
+                              Toast.makeText(this, \"Tekan sekali lagi untuk keluar\", Toast.LENGTH_SHORT).show();
+                          } else {
+                              super.onBackPressed();
+                          }
+                      }
+                  }
+              }" > "$NEW_DIR/MainActivity.java"
           fi
           
           # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
