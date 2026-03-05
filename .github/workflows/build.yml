@@ -92,7 +92,6 @@ jobs:
               jq '.appId = "${{ inputs.packageName }}" | .appName = "${{ inputs.appName }}" | .webDir = "www" | .server = {"url": "${{ inputs.url }}", "cleartext": true, "allowNavigation": ["*"]}' capacitor.config.json > tmp.json && mv tmp.json capacitor.config.json
           fi
           
-          # 1. SAPU BERSIH PACKAGE NAME LAMA DI SELURUH FILE PROJECT
           MAIN_ACTIVITY=$(find android/app/src/main/java -type f -name "MainActivity.java" | head -n 1)
           if [ ! -z "$MAIN_ACTIVITY" ]; then
               OLD_PACKAGE=$(grep -o 'package .*;' "$MAIN_ACTIVITY" | sed 's/package //; s/;//' | tr -d '\r' | tr -d ' ')
@@ -102,20 +101,18 @@ jobs:
               NEW_DIR="android/app/src/main/java/$(echo ${{ inputs.packageName }} | tr '.' '/')"
               mkdir -p "$NEW_DIR"
               if [ "$MAIN_ACTIVITY" != "$NEW_DIR/MainActivity.java" ]; then
-                  rm "$MAIN_ACTIVITY"
+                  mv "$MAIN_ACTIVITY" "$NEW_DIR/"
               fi
               
-              cat << 'EOF' > "$NEW_DIR/MainActivity.java"
+              cat << EOF > "$NEW_DIR/MainActivity.java"
           package ${{ inputs.packageName }};
-
-          import com.getcapacitor.BridgeActivity;
+          import android.os.Bundle;
           import android.webkit.WebView;
           import android.widget.Toast;
-          import android.os.Handler;
-          import android.os.Looper;
+          import com.getcapacitor.BridgeActivity;
 
           public class MainActivity extends BridgeActivity {
-              private boolean doubleBackToExitPressedOnce = false;
+              private long backPressedTime = 0;
 
               @Override
               public void onBackPressed() {
@@ -123,38 +120,29 @@ jobs:
                   if (webView != null && webView.canGoBack()) {
                       webView.goBack();
                   } else {
-                      if (doubleBackToExitPressedOnce) {
+                      if (backPressedTime + 2000 > System.currentTimeMillis()) {
                           super.onBackPressed();
-                          return;
+                          finish();
+                      } else {
+                          Toast.makeText(getBaseContext(), "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
                       }
-                      this.doubleBackToExitPressedOnce = true;
-                      Toast.makeText(this, "Tekan sekali lagi untuk keluar", Toast.LENGTH_SHORT).show();
-                      new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-                          @Override
-                          public void run() {
-                              doubleBackToExitPressedOnce = false;
-                          }
-                      }, 2000);
+                      backPressedTime = System.currentTimeMillis();
                   }
               }
           }
           EOF
           fi
           
-          # 2. SAPU BERSIH NAMA APLIKASI (App Info & Home Screen Launcher)
           sed -i -E 's/<string name="app_name">[^<]*<\/string>/<string name="app_name">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="title_activity_main">[^<]*<\/string>/<string name="title_activity_main">${{ inputs.appName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="package_name">[^<]*<\/string>/<string name="package_name">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           sed -i -E 's/<string name="custom_url_scheme">[^<]*<\/string>/<string name="custom_url_scheme">${{ inputs.packageName }}<\/string>/g' android/app/src/main/res/values/strings.xml
           
-          # Memaksa AndroidManifest membaca dari referensi string yang baru
           sed -i -E 's/android:label="[^"]*"/android:label="@string\/app_name"/g' android/app/src/main/AndroidManifest.xml
           
-          # 3. KONFIGURASI VERSI
           sed -i -E 's/versionCode [0-9]+/versionCode ${{ inputs.versionCode }}/g' android/app/build.gradle
           sed -i -E 's/versionName "[^"]*"/versionName "${{ inputs.versionName }}"/g' android/app/build.gradle
           
-          # 4. UNDUH ICON & SPLASH
           mkdir -p assets
           curl -sL "${{ inputs.iconUrl }}" -o assets/icon.png
           cp assets/icon.png assets/splash.png
@@ -202,7 +190,6 @@ jobs:
         run: |
           set -e
           npm install @capacitor/assets @capacitor/cli --no-audit --no-fund --prefer-offline --legacy-peer-deps
-          # Parameter paksaan agar Asset (Icon) benar-benar ter-overwrite
           npx @capacitor/assets generate --assetPath assets --android --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
           npx cap sync android
           
